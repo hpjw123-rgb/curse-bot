@@ -1,5 +1,5 @@
 // ==========================================
-// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + AI LINES + DOMAIN CLASH + DAILY LIMIT + ENHANCE + QUICK REPLIES)
+// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + AI LINES + DOMAIN CLASH + LIMITS + ENHANCE + QUICK REPLIES)
 // 카카오톡 챗봇
 // ==========================================
 
@@ -17,11 +17,20 @@ let players = {};
 // DAILY LIMIT (KST)
 // ==========================================
 const DAILY_BATTLES = 4;
+const HOURLY_CURSE_BATTLES = 5;
+
+function kstNow(){
+  const now = new Date();
+  return new Date(now.getTime() + 9 * 60 * 60 * 1000);
+}
 
 function kstDateString(){
-  const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return kst.toISOString().slice(0,10);
+  return kstNow().toISOString().slice(0,10);
+}
+
+function kstHourString(){
+  const k = kstNow();
+  return k.toISOString().slice(0,13);
 }
 
 function resetDailyIfNeeded(p){
@@ -29,6 +38,14 @@ function resetDailyIfNeeded(p){
   if (p.lastBattleDate !== today){
     p.lastBattleDate = today;
     p.dailyBattles = 0;
+  }
+}
+
+function resetCurseIfNeeded(p){
+  const hour = kstHourString();
+  if (p.lastCurseHour !== hour){
+    p.lastCurseHour = hour;
+    p.curseBattles = 0;
   }
 }
 
@@ -155,7 +172,9 @@ function createPlayer(name){
     domainBlocked: tech.type === "heavenly",
     domainName: generateDomainName({enhance:0}),
     dailyBattles: 0,
-    lastBattleDate: kstDateString()
+    lastBattleDate: kstDateString(),
+    curseBattles: 0,
+    lastCurseHour: kstHourString()
   };
 }
 
@@ -312,8 +331,23 @@ function statusPower(p){
 }
 
 // ==========================================
+// CURSE BATTLE
+// ==========================================
+function randomCursePowerByDigits(sp){
+  if (sp >= 100) return Math.floor(Math.random() * 900) + 100;
+  return Math.floor(Math.random() * 90) + 10;
+}
+
+// ==========================================
 // BATTLE SYSTEM
 // ==========================================
+function top3Names(){
+  return Object.values(players)
+    .sort((a,b) => b.point - a.point)
+    .slice(0,3)
+    .map(p => p.nickname);
+}
+
 function battle(a, b){
   const A = calculatePower(a, b);
   const B = calculatePower(b, a);
@@ -328,18 +362,6 @@ function battle(a, b){
   }
 
   if (mahoragaEvent){
-    a.point = 0;
-    b.point = 0;
-
-    if (a.techniqueType !== "immortal"){
-      let idA = Object.keys(players).find(k => players[k] === a);
-      if (idA) players[idA] = createPlayer(a.nickname);
-    }
-    if (b.techniqueType !== "immortal"){
-      let idB = Object.keys(players).find(k => players[k] === b);
-      if (idB) players[idB] = createPlayer(b.nickname);
-    }
-
     return {winner: null, loser: null, A, B, mahoragaEvent: true};
   }
 
@@ -350,11 +372,6 @@ function battle(a, b){
 
   if (winner.techniqueType === "curse_absorb"){
     winner.absorbedPower += Math.floor(raw(loser)/5);
-  }
-
-  if (loser.techniqueType !== "immortal"){
-    let id = Object.keys(players).find(k => players[k] === loser);
-    if (id) players[id] = createPlayer(loser.nickname);
   }
 
   return {winner, loser, A, B, mahoragaEvent: false};
@@ -368,6 +385,7 @@ function quickReplies(){
     {label:"/가입", action:"message", messageText:"/가입 "},
     {label:"/상태", action:"message", messageText:"/상태"},
     {label:"/전투", action:"message", messageText:"/전투 "},
+    {label:"/주령전투", action:"message", messageText:"/주령전투"},
     {label:"/랭킹", action:"message", messageText:"/랭킹"},
     {label:"/강화", action:"message", messageText:"/강화"}
   ];
@@ -403,6 +421,16 @@ function rankingText(){
   return lines.join("\n");
 }
 
+function statusText(p){
+  const sp = statusPower(p);
+  return `[플레이어:${p.nickname}]
+{술식:${p.technique}(${p.enhance}강)}
+[전투력:${sp}]
+[소지 포인트:${p.point}]
+[주력량:${p.energyGrade}]
+[영역:${p.domainName.replace("❌ ","")}]`;
+}
+
 // ==========================================
 // CHATBOT ROUTE
 // ==========================================
@@ -426,14 +454,7 @@ app.post("/chat", (req, res) => {
   if (!p) return res.json(replyText("/가입 필요"));
 
   if (msg === "/상태"){
-    const sp = statusPower(p);
-    return res.json(replyText(
-`[플레이어:${p.nickname}]
-{술식:${p.technique}(${p.enhance}강)}
-[전투력:${sp}]
-[소지 포인트:${p.point}]
-[영역:${p.domainName.replace("❌ ","")}]`
-    ));
+    return res.json(replyText(statusText(p)));
   }
 
   if (msg === "/랭킹"){
@@ -462,6 +483,34 @@ app.post("/chat", (req, res) => {
     return res.json(replyText(`강화 실패... (성공률 ${(rate*100).toFixed(1)}%)`));
   }
 
+  if (msg === "/주령전투"){
+    resetCurseIfNeeded(p);
+    if (p.curseBattles >= HOURLY_CURSE_BATTLES){
+      return res.json(replyText(`이번 시간대 주령전투 횟수를 모두 사용했습니다. (1시간 ${HOURLY_CURSE_BATTLES}회)`));
+    }
+
+    p.curseBattles += 1;
+
+    const sp = statusPower(p);
+    const cp = randomCursePowerByDigits(sp);
+
+    if (sp >= cp){
+      p.point += 1;
+      return res.json(replyText(
+`👹 주령전투
+${p.nickname} vs 주령
+${sp} vs ${cp}
+주령 처치! 포인트 +1`
+      ));
+    }
+    return res.json(replyText(
+`👹 주령전투
+${p.nickname} vs 주령
+${sp} vs ${cp}
+패배... 캐릭터는 유지됩니다.`
+    ));
+  }
+
   if (msg.startsWith("/전투")){
     resetDailyIfNeeded(p);
     if (p.dailyBattles >= DAILY_BATTLES){
@@ -476,30 +525,59 @@ app.post("/chat", (req, res) => {
 
     p.dailyBattles += 1;
 
+    const top3 = top3Names();
     const r = battle(p, e);
 
     if (r.mahoragaEvent){
-      return res.json(replyText(
-`⚔ 전투
+      let msgText = `⚔ 전투
 ${p.nickname} vs ${e.nickname}
 ${r.A.power} vs ${r.B.power}
-도박형 즉사 발동
-양측 포인트 0 + 리셋`
-      ));
+도박형 즉사 발동`;
+
+      if (p.techniqueType !== "immortal"){
+        delete players[id];
+        msgText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
+        if (top3.includes(p.nickname)) msgText += `\n알림: TOP3 캐릭터 ${p.nickname} 사망`;
+      }
+
+      const eid = Object.keys(players).find(k => players[k] === e);
+      if (e.techniqueType !== "immortal" && eid){
+        delete players[eid];
+        msgText += `\n상대 캐릭터 ${e.nickname} 사망`;
+        if (top3.includes(e.nickname)) msgText += `\n알림: TOP3 캐릭터 ${e.nickname} 사망`;
+      }
+
+      return res.json(replyText(msgText));
     }
 
-    return res.json(replyText(
+    let resultText =
 `⚔ 전투
 ${p.nickname} vs ${e.nickname}
 ${r.A.power} vs ${r.B.power}
 ${r.A.log}
 ${r.A.domainText||""}
 ${aiResult()}
-승자:${r.winner.nickname}`
-    ));
+승자:${r.winner.nickname}`;
+
+    if (r.loser.techniqueType !== "immortal"){
+      const loserId = Object.keys(players).find(k => players[k] === r.loser);
+      if (loserId){
+        if (r.loser === p){
+          delete players[id];
+          resultText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
+          if (top3.includes(p.nickname)) resultText += `\n알림: TOP3 캐릭터 ${p.nickname} 사망`;
+        } else {
+          delete players[loserId];
+          resultText += `\n상대 캐릭터 ${r.loser.nickname} 사망`;
+          if (top3.includes(r.loser.nickname)) resultText += `\n알림: TOP3 주술사 ${r.loser.nickname} 사망`;
+        }
+      }
+    }
+
+    return res.json(replyText(resultText));
   }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /랭킹 /강화"));
+  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /랭킹 /강화"));
 });
 
 app.listen(PORT, () => console.log("RUN"));
