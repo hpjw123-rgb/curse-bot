@@ -1,12 +1,12 @@
 // ==========================================
-// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + AI LINES + DOMAIN CLASH + DAILY LIMIT + ENHANCE)
+// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + AI LINES + DOMAIN CLASH + DAILY LIMIT + ENHANCE + QUICK REPLIES)
 // 카카오톡 챗봇
 // ==========================================
 
 const express = require("express");
 const app = express();
 app.use(express.json());
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 // ==========================================
 // PLAYER STORAGE
@@ -41,13 +41,8 @@ const enhanceRates = {
   6: 0.30, 7: 0.22, 8: 0.15, 9: 0.09, 10: 0.05
 };
 
-function enhanceCost(nextLevel){
-  return nextLevel;
-}
-
-function enhanceRate(nextLevel){
-  return enhanceRates[nextLevel] ?? 0.05;
-}
+function enhanceCost(nextLevel){ return nextLevel; }
+function enhanceRate(nextLevel){ return enhanceRates[nextLevel] ?? 0.05; }
 
 // ==========================================
 // ENERGY SYSTEM
@@ -290,6 +285,33 @@ function calculatePower(p, e){
 }
 
 // ==========================================
+// STATUS POWER (STATIC BUFFS ONLY)
+// ==========================================
+function statusPower(p){
+  let power = p.basePower;
+
+  if (p.techniqueType === "heavenly"){
+    power = heavenlyBase(p.energyGrade) * 25;
+  } else {
+    power += p.energyBonus;
+  }
+
+  power += p.absorbedPower;
+
+  if (p.techniqueType === "fish"){
+    power *= gradeFactor(p.energyGrade);
+  }
+
+  power *= Math.pow(1.2, p.enhance);
+
+  if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
+    power = 10;
+  }
+
+  return Math.floor(power);
+}
+
+// ==========================================
 // BATTLE SYSTEM
 // ==========================================
 function battle(a, b){
@@ -341,8 +363,18 @@ function battle(a, b){
 // ==========================================
 // HELPERS
 // ==========================================
+function quickReplies(){
+  return [
+    {label:"/가입", action:"message", messageText:"/가입 "},
+    {label:"/상태", action:"message", messageText:"/상태"},
+    {label:"/전투", action:"message", messageText:"/전투 "},
+    {label:"/랭킹", action:"message", messageText:"/랭킹"},
+    {label:"/강화", action:"message", messageText:"/강화"}
+  ];
+}
+
 function replyText(text){
-  return {version:"2.0", template:{outputs:[{simpleText:{text}}]}};
+  return {version:"2.0", template:{outputs:[{simpleText:{text}}], quickReplies: quickReplies()}};
 }
 
 function getPlayerByName(name){
@@ -394,7 +426,14 @@ app.post("/chat", (req, res) => {
   if (!p) return res.json(replyText("/가입 필요"));
 
   if (msg === "/상태"){
-    return res.json(replyText(`${p.nickname}\n${p.technique}\n${p.point}\n${p.domainName}\n강화:${p.enhance}`));
+    const sp = statusPower(p);
+    return res.json(replyText(
+`[플레이어:${p.nickname}]
+{술식:${p.technique}(${p.enhance}강)}
+[전투력:${sp}]
+[소지 포인트:${p.point}]
+[영역:${p.domainName.replace("❌ ","")}]`
+    ));
   }
 
   if (msg === "/랭킹"){
