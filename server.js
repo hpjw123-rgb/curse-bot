@@ -18,6 +18,20 @@ app.use("/images", express.static(path.join(__dirname, "public/images")));
 const BASE_URL = "https://curse-bot-40zs.onrender.com";
 
 // ==========================================
+// COMMON IMAGES
+// ==========================================
+const DEATH_IMAGE = "/images/death.png";
+const FIGHT_IMAGES = [
+  "/images/fight scene1.jpg",
+  "/images/fight scene 2.jpg",
+  "/images/fight scene 3.jpg"
+];
+
+function randomFightImage(){
+  return FIGHT_IMAGES[Math.floor(Math.random()*FIGHT_IMAGES.length)];
+}
+
+// ==========================================
 // PLAYER STORAGE
 // ==========================================
 let players = {};
@@ -110,7 +124,7 @@ const techniques = [
   {name:"주복사사",grade:"1급",power:59,type:"receipt"},
   {name:"BOM-BA-YE",grade:"1급",power:62,type:"nullify"},
 
-  {name:"환수호박",grade:"2급",power:89,type:"suicide"},
+  {name:"환수호박",grade:"2급",power:79,type:"suicide"},
   {name:"무위전변",grade:"2급",power:74,type:"idle"},
   {name:"성간비행",grade:"2급",power:69,type:"space"},
 
@@ -628,6 +642,7 @@ ${sp} vs ${cp}
 
     const top3 = top3Names();
     const r = battle(p, e);
+    let deathTriggered = false;
 
     if (r.mahoragaEvent){
       let msgText = `⚔ 전투
@@ -638,17 +653,18 @@ ${r.A.power} vs ${r.B.power}
       if (p.techniqueType !== "immortal"){
         delete players[id];
         msgText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
-        if (top3.includes(p.nickname)) msgText += `\n알림: TOP3 주술사 ${p.nickname} 사망`;
+        if (top3.includes(p.nickname)) { msgText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
       }
 
       const eid = Object.keys(players).find(k => players[k] === e);
       if (e.techniqueType !== "immortal" && eid){
         delete players[eid];
         msgText += `\n상대 캐릭터 ${e.nickname} 사망`;
-        if (top3.includes(e.nickname)) msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`;
+        if (top3.includes(e.nickname)) { msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`; deathTriggered = true; }
       }
 
-      return res.json(replyText(msgText));
+      const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
+      return res.json(replyCard("전투 결과", msgText, img));
     }
 
     let resultText =
@@ -669,16 +685,17 @@ ${aiResult()}
         if (r.loser === p){
           delete players[id];
           resultText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
-          if (top3.includes(p.nickname)) resultText += `\n알림: TOP3 주술사 ${p.nickname} 사망`;
+          if (top3.includes(p.nickname)) { resultText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
         } else {
           delete players[loserId];
           resultText += `\n상대 캐릭터 ${r.loser.nickname} 사망`;
-          if (top3.includes(r.loser.nickname)) resultText += `\n알림: TOP3 주술사 ${r.loser.nickname} 사망`;
+          if (top3.includes(r.loser.nickname)) { resultText += `\n알림: TOP3 주술사 ${r.loser.nickname} 사망`; deathTriggered = true; }
         }
       }
     }
 
-    return res.json(replyText(resultText));
+    const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
+    return res.json(replyCard("전투 결과", resultText, img));
   }
 
   return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /랭킹 /강화"));
