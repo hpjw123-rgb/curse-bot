@@ -15,7 +15,7 @@ const PORT = 3000;
 app.use("/images", express.static(path.join(__dirname, "public/images")));
 
 // 반드시 실제 도메인으로 변경하세요.
-const BASE_URL = "hhttps://curse-bot-40zs.onrender.com";
+const BASE_URL = "https://curse-bot-40zs.onrender.com";
 
 // ==========================================
 // PLAYER STORAGE
