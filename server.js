@@ -260,10 +260,10 @@ function createPlayer(name){
 function raw(p){return p.basePower + p.energyBonus;}
 
 function fishFactor(grade){
-  if (grade === "특급") return 2.5 ** 4;
-  if (grade === "1급") return 2.5 ** 3;
-  if (grade === "2급") return 2.5 ** 2;
-  return 2.5;
+  if (grade === "특급") return 2.0 ** 4;
+  if (grade === "1급") return 2.0 ** 3;
+  if (grade === "2급") return 2.0 ** 2;
+  return 2.0;
 }
 
 function heavenlyBase(grade){
