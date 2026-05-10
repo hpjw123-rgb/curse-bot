@@ -9,7 +9,9 @@ const path = require("path");
 const mongoose = require("mongoose");
 require("dotenv").config();
 app.use(express.json());
-const PORT = 3000;
+
+// Render는 process.env.PORT 사용 권장
+const PORT = process.env.PORT || 3000;
 
 // ==========================================
 // STATIC IMAGE
@@ -37,6 +39,8 @@ function randomFightImage(){
 // MONGODB
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) console.log("MONGO_URI가 설정되지 않았습니다.");
+
 mongoose.connect(MONGO_URI, { autoIndex: true })
   .then(() => console.log("MongoDB 연결 성공"))
   .catch(err => console.log(err));
@@ -776,8 +780,7 @@ app.post("/chat", async (req, res) => {
         await savePlayer(p);
       }
 
-      const eid = Object.keys(players).find(k => players[k].nickname === e.nickname);
-      if (e.techniqueType !== "immortal" && eid){
+      if (e.techniqueType !== "immortal"){
         await deletePlayer(e.userId);
         msgText += `\n상대 캐릭터 ${e.nickname} 사망`;
         if (top3.includes(e.nickname)) { msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`; deathTriggered = true; }
@@ -812,4 +815,4 @@ app.post("/chat", async (req, res) => {
   return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /랭킹 /강화"));
 });
 
-app.listen(PORT, () => console.log("RUN"));
+app.listen(PORT, "0.0.0.0", () => console.log(`RUN : ${PORT}`));
