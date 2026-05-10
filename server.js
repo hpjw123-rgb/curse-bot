@@ -6,6 +6,8 @@
 const express = require("express");
 const app = express();
 const path = require("path");
+const mongoose = require("mongoose");
+require("dotenv").config();
 app.use(express.json());
 const PORT = 3000;
 
@@ -248,6 +250,7 @@ function createPlayer(name){
     energyBonus: energy.bonus,
     enhance: 0,
     absorbedPower: 0,
+    bloodStack: 0,
     domainBlocked: tech.type === "heavenly",
     domainName: generateDomainName({enhance:0}),
     battleCount: 0,
@@ -282,114 +285,134 @@ function clashDomain(a, b) {
 
   if (A > B) {
     b.domainBlocked = true;
-    return `🌌 영역 충돌!
-${a.domainName} 승리
-${b.nickname} 영역 붕괴`;
+    return `🌌 영역 충돌!\n${a.domainName} 승리\n${b.nickname} 영역 붕괴`;
   } else if (B > A) {
     a.domainBlocked = true;
-    return `🌌 영역 충돌!
-${b.domainName} 승리
-${a.nickname} 영역 붕괴`;
+    return `🌌 영역 충돌!\n${b.domainName} 승리\n${a.nickname} 영역 붕괴`;
   }
 
   a.domainBlocked = true;
   b.domainBlocked = true;
-  return `🌌 영역 충돌!
-서로 상쇄되어 공간 붕괴`;
+  return `🌌 영역 충돌!\n서로 상쇄되어 공간 붕괴`;
 }
 
 // ==========================================
 // POWER CALC
 // ==========================================
-function calculatePower(p, e){
+function calculatePower(p, e, opts = {}){
   let power = p.basePower;
   let log = "";
   let domainText = "";
   let blackText = "";
+  const ignoreSpecial = !!opts.ignoreSpecial;
+  const blockDomain = !!opts.blockDomain;
 
   log += aiLine();
+  if (opts.extraLog) log += " " + opts.extraLog;
 
-  if (p.techniqueType === "fish"){
-    power = p.basePower * fishFactor(p.energyGrade);
-    log += " 어주자";
-  }
-
-  if (p.techniqueType === "heavenly"){
-    power = heavenlyBase(p.energyGrade) * 25;
-  } else {
-    power += p.energyBonus;
-  }
-
-  power += p.absorbedPower;
-
-  if (p.techniqueType === "copy"){
-    const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
-    power += Math.floor(enemyTotal / 2);
-    log += " 모방";
-  }
-
-  if (p.techniqueType === "curse_absorb"){
-    power += e.energyBonus;
-  }
-
-  if (p.techniqueType === "receipt"){
-    power += e.point * 2;
-    log += " 주복사사";
-  }
-
-  if (p.techniqueType === "energy_counter"){
-    power += e.energyBonus * 2;
-    log += " 추령주법";
-  }
-
-  power *= Math.pow(1.2, p.enhance);
-
-  if (p.techniqueType === "mahoraga" && p.enhance >= 11){
-    power += Math.floor(power / 3);
-    log += " 마허라 동기화";
-  }
-
-  if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
-    power = 10; log += " 무하한 제한!";
-  }
-
-  if (p.techniqueType === "jackpot" && Math.random() < 0.05){
-    power *= 1.7;
-    log += " 잭팟";
-  }
-
-  if (p.techniqueType === "ratio" && Math.random() < 0.7){
-    power *= 1.3;
-    log += " 십획";
-  }
-
-  if (p.techniqueType === "projection"){
-    const pr = raw(p);
-    const er = raw(e);
-    if (pr < er){
-      power *= 1.2;
-      log += " 투사주법";
-    } else if (pr > er){
-      power *= 2;
-      log += " 투사주법";
+  if (!ignoreSpecial){
+    if (p.techniqueType === "fish"){
+      power = p.basePower * fishFactor(p.energyGrade);
+      log += " 어주자";
     }
-  }
 
-  if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")){
-    if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6){
-      power *= 2;
-      log += " 영역전개";
-      domainText = domainEffectText(p);
-      if (e.enhance >= 6 && Math.random() < 0.5){
-        domainText += "\n" + clashDomain(p, e);
+    if (p.techniqueType === "heavenly"){
+      power = heavenlyBase(p.energyGrade) * 25;
+    } else {
+      power += p.energyBonus;
+    }
+
+    power += p.absorbedPower;
+
+    if (p.techniqueType === "copy"){
+      const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
+      power += Math.floor(enemyTotal / 2);
+      log += " 모방";
+    }
+
+    if (p.techniqueType === "curse_absorb"){
+      power += e.energyBonus;
+    }
+
+    if (p.techniqueType === "receipt"){
+      power += e.point * 2;
+      log += " 주복사사";
+    }
+
+    if (p.technique === "재계상"){
+      const receipt = Math.floor(Math.random() * 100) + 1;
+      power += receipt;
+      log += ` 재계상(영수증 ${receipt})`;
+    }
+
+    if (p.technique === "적혈조술"){
+      power += p.bloodStack * 8;
+      log += ` 혈식+${p.bloodStack}`;
+    }
+
+    if (p.techniqueType === "energy_counter"){
+      power += e.energyBonus * 2;
+      log += " 추령주법";
+    }
+
+    power *= Math.pow(1.2, p.enhance);
+
+    if (p.techniqueType === "mahoraga" && p.enhance >= 11){
+      power += Math.floor(power / 3);
+      log += " 마허라 동기화";
+    }
+
+    if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
+      power = 10; log += " 무하한 제한!";
+    }
+
+    if (p.techniqueType === "jackpot" && Math.random() < 0.05){
+      power *= 1.7;
+      log += " 잭팟";
+    }
+
+    if (p.techniqueType === "ratio" && Math.random() < 0.7){
+      power *= 1.3;
+      log += " 십획";
+    }
+
+    if (p.techniqueType === "projection"){
+      const pr = raw(p);
+      const er = raw(e);
+      if (pr < er){
+        power *= 1.2;
+        log += " 투사주법";
+      } else if (pr > er){
+        power *= 2;
+        log += " 투사주법";
       }
     }
-  }
 
-  if (Math.random() < 0.01){
-    power *= 2.5;
-    log += " 흑섬";
-    blackText = blackFlashText();
+    if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")){
+      if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6){
+        if (!blockDomain){
+          power *= 2;
+          log += " 영역전개";
+          domainText = domainEffectText(p);
+          if (e.enhance >= 6 && Math.random() < 0.5){
+            domainText += "\n" + clashDomain(p, e);
+          }
+        } else {
+          log += " 영역전개(무효)";
+          domainText = `🌌 영역전개 무효\n${p.nickname}의 영역이 저지된다.`;
+        }
+      }
+    }
+
+    if (Math.random() < 0.01){
+      power *= 2.5;
+      log += " 흑섬";
+      blackText = blackFlashText();
+    }
+  } else {
+    power += p.energyBonus;
+    power += p.absorbedPower;
+    power *= Math.pow(1.2, p.enhance);
   }
 
   return {power: Math.floor(power), log, domainText, blackText};
@@ -412,6 +435,11 @@ function statusPower(p){
   }
 
   power += p.absorbedPower;
+
+  if (p.technique === "적혈조술"){
+    power += p.bloodStack * 8;
+  }
+
   power *= Math.pow(1.2, p.enhance);
 
   if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
@@ -439,23 +467,77 @@ function top3Names(){
 }
 
 function battle(a, b){
-  const A = calculatePower(a, b);
-  const B = calculatePower(b, a);
+  const aAnti = (a.technique === "초미지규" && Math.random() < 0.25);
+  const bAnti = (b.technique === "초미지규" && Math.random() < 0.25);
+
+  const A = calculatePower(a, b, {
+    ignoreSpecial: bAnti,
+    blockDomain: (b.technique === "환수호박"),
+    extraLog: aAnti ? "초미지규 발동" : ""
+  });
+
+  const B = calculatePower(b, a, {
+    ignoreSpecial: aAnti,
+    blockDomain: (a.technique === "환수호박"),
+    extraLog: bAnti ? "초미지규 발동" : ""
+  });
+
+  let Ap = A.power;
+  let Bp = B.power;
+
+  if (a.technique === "성간비행"){
+    const rate = (Ap < Bp) ? 0.35 : 0.20;
+    Bp = Math.floor(Bp * (1 - rate));
+    A.log += ` 성간비행(-${Math.floor(rate*100)}%)`;
+  }
+  if (b.technique === "성간비행"){
+    const rate = (Bp < Ap) ? 0.35 : 0.20;
+    Ap = Math.floor(Ap * (1 - rate));
+    B.log += ` 성간비행(-${Math.floor(rate*100)}%)`;
+  }
+
+  if (a.technique === "무위전변"){
+    const rate = (Math.floor(Math.random() * 21) + 15) / 100;
+    const cut = Math.floor(Bp * rate);
+    Bp -= cut;
+    Ap += Math.floor(cut * 0.5);
+    A.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
+  }
+  if (b.technique === "무위전변"){
+    const rate = (Math.floor(Math.random() * 21) + 15) / 100;
+    const cut = Math.floor(Ap * rate);
+    Ap -= cut;
+    Bp += Math.floor(cut * 0.5);
+    B.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
+  }
+
+  if (a.technique === "BOM-BA-YE" && Ap < Bp){
+    const diff = Bp - Ap;
+    if (diff >= 200) Ap = Math.floor(Ap * 2);
+    else if (diff >= 100) Ap = Math.floor(Ap * 1.6);
+    else if (diff >= 50) Ap = Math.floor(Ap * 1.3);
+    A.log += " BOM-BA-YE";
+  }
+  if (b.technique === "BOM-BA-YE" && Bp < Ap){
+    const diff = Ap - Bp;
+    if (diff >= 200) Bp = Math.floor(Bp * 2);
+    else if (diff >= 100) Bp = Math.floor(Bp * 1.6);
+    else if (diff >= 50) Bp = Math.floor(Bp * 1.3);
+    B.log += " BOM-BA-YE";
+  }
+
+  const Af = { ...A, power: Math.floor(Ap) };
+  const Bf = { ...B, power: Math.floor(Bp) };
 
   let mahoragaEvent = false;
-
-  if (a.techniqueType === "mahoraga" && Math.random() < 0.2 && B.power < 300){
-    mahoragaEvent = true;
-  }
-  if (b.techniqueType === "mahoraga" && Math.random() < 0.2 && A.power < 300){
-    mahoragaEvent = true;
-  }
+  if (a.techniqueType === "mahoraga" && Math.random() < 0.2 && Bf.power < 300) mahoragaEvent = true;
+  if (b.techniqueType === "mahoraga" && Math.random() < 0.2 && Af.power < 300) mahoragaEvent = true;
 
   if (mahoragaEvent){
-    return {winner: null, loser: null, A, B, mahoragaEvent: true};
+    return {winner: null, loser: null, A: Af, B: Bf, mahoragaEvent: true};
   }
 
-  let winner = A.power >= B.power ? a : b;
+  let winner = Af.power >= Bf.power ? a : b;
   let loser = winner === a ? b : a;
 
   winner.point += 5;
@@ -464,7 +546,11 @@ function battle(a, b){
     winner.absorbedPower += Math.floor(raw(loser)/5);
   }
 
-  return {winner, loser, A, B, mahoragaEvent: false};
+  if (winner.technique === "적혈조술"){
+    winner.bloodStack += 1;
+  }
+
+  return {winner, loser, A: Af, B: Bf, mahoragaEvent: false};
 }
 
 // ==========================================
