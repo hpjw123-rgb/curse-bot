@@ -10,7 +10,6 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 app.use(express.json());
 
-// Render는 process.env.PORT 사용 권장
 const PORT = process.env.PORT || 3000;
 
 // ==========================================
@@ -107,6 +106,10 @@ function kstHourString(){
   return k.toISOString().slice(0,13);
 }
 
+function kstMinute(){
+  return kstNow().getUTCMinutes();
+}
+
 function kst6hWindow(){
   const k = kstNow();
   const y = k.getUTCFullYear();
@@ -131,6 +134,44 @@ function resetCurseIfNeeded(p){
     p.lastCurseHour = hour;
     p.curseBattles = 0;
   }
+}
+
+// ==========================================
+// SPECIAL CURSE RAID
+// ==========================================
+const SPECIAL_CURSES = ["오리모토 리카","죠고","쿠로우루시","마히토","다곤","하나미"];
+const SPECIAL_BASE = 200;
+const SPECIAL_PER = 120;
+const SPECIAL_MAX = 2000;
+
+let raid = {
+  hour: null,
+  boss: null,
+  participants: {},
+  claimed: {}
+};
+
+function raidHour(){
+  return kstHourString();
+}
+
+function resetRaidIfNeeded(){
+  const h = raidHour();
+  if (raid.hour !== h){
+    raid.hour = h;
+    raid.boss = SPECIAL_CURSES[Math.floor(Math.random()*SPECIAL_CURSES.length)];
+    raid.participants = {};
+    raid.claimed = {};
+  }
+}
+
+function raidPower(){
+  const cnt = Object.keys(raid.participants).length;
+  return Math.min(SPECIAL_MAX, SPECIAL_BASE + cnt * SPECIAL_PER);
+}
+
+function rewardByPower(pw){
+  return Math.min(20, Math.max(1, Math.floor(pw / 200)));
 }
 
 // ==========================================
@@ -310,10 +351,10 @@ function createPlayer(name, userId){
 function raw(p){return p.basePower + p.energyBonus;}
 
 function fishFactor(grade){
-  if (grade === "특급") return 2.0 ** 4;
-  if (grade === "1급") return 2.0 ** 3;
-  if (grade === "2급") return 2.0 ** 2;
-  return 2.0;
+  if (grade === "특급") return 2.2 ** 4;
+  if (grade === "1급") return 2.2 ** 3;
+  if (grade === "2급") return 2.2 ** 2;
+  return 2.2;
 }
 
 function heavenlyBase(grade){
@@ -382,7 +423,7 @@ function calculatePower(p, e, opts = {}){
     }
 
     if (p.techniqueType === "receipt"){
-      power += e.point * 2;
+      power += e.point * 10;
       log += " 주복사사";
     }
 
@@ -438,7 +479,8 @@ function calculatePower(p, e, opts = {}){
     if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")){
       if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6){
         if (!blockDomain){
-          power *= 2;
+          const domainMult = p.techniqueType === "receipt" ? 2.2 : 2.0;
+          power *= domainMult;
           log += " 영역전개";
           domainText = domainEffectText(p);
           if (e.enhance >= 6 && Math.random() < 0.5){
@@ -547,14 +589,14 @@ function battle(a, b){
     const rate = (Math.floor(Math.random() * 21) + 15) / 100;
     const cut = Math.floor(Bp * rate);
     Bp -= cut;
-    Ap += Math.floor(cut * 0.5);
+    Ap += Math.floor(cut * 0.3);
     A.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
   }
   if (b.technique === "무위전변"){
     const rate = (Math.floor(Math.random() * 21) + 15) / 100;
     const cut = Math.floor(Ap * rate);
     Ap -= cut;
-    Bp += Math.floor(cut * 0.5);
+    Bp += Math.floor(cut * 0.3);
     B.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
   }
 
@@ -609,6 +651,7 @@ function quickReplies(){
     {label:"/상태", action:"message", messageText:"/상태"},
     {label:"/전투", action:"message", messageText:"/전투 "},
     {label:"/주령전투", action:"message", messageText:"/주령전투"},
+    {label:"/특급주령", action:"message", messageText:"/특급주령"},
     {label:"/랭킹", action:"message", messageText:"/랭킹"},
     {label:"/강화", action:"message", messageText:"/강화"}
   ];
@@ -665,6 +708,18 @@ function statusText(p){
   return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ","")}]`;
 }
 
+function strongestParticipant(){
+  let maxP = null;
+  let maxV = -1;
+  Object.values(raid.participants).forEach(p => {
+    if (p.power > maxV){
+      maxV = p.power;
+      maxP = p;
+    }
+  });
+  return { maxP, maxV };
+}
+
 // ==========================================
 // CHATBOT ROUTE
 // ==========================================
@@ -688,7 +743,8 @@ app.post("/chat", async (req, res) => {
     const p = createPlayer(name, id);
     players[id] = p;
     await savePlayer(p);
-    return res.json(replyText("가입 완료"));
+    const img = techniqueImageUrl(p);
+    return res.json(replyCard(p.technique, statusText(p), img));
   }
 
   const p = players[id];
@@ -749,6 +805,49 @@ app.post("/chat", async (req, res) => {
     }
     await savePlayer(p);
     return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배... 캐릭터는 유지됩니다.`));
+  }
+
+  if (msg === "/특급주령"){
+    resetRaidIfNeeded();
+    const minute = kstMinute();
+    const hour = raidHour();
+
+    if (minute < 30){
+      if (!raid.participants[id]){
+        const sp = statusPower(p);
+        raid.participants[id] = { userId: id, nickname: p.nickname, power: sp };
+        return res.json(replyText(`특급 주령 대기열 참가 완료\n보스: ${raid.boss}\n현재 참가자 수: ${Object.keys(raid.participants).length}`));
+      }
+      return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.\n보스: ${raid.boss}`));
+    }
+
+    if (!raid.participants[id]){
+      return res.json(replyText("현재 회차에 참가하지 않았습니다."));
+    }
+
+    if (raid.claimed[id]){
+      return res.json(replyText("이미 보상을 수령했습니다."));
+    }
+
+    if (raid.hour !== hour){
+      return res.json(replyText("보상 기간이 종료되었습니다."));
+    }
+
+    const bossPower = raidPower();
+    const { maxP, maxV } = strongestParticipant();
+    const win = maxV >= bossPower;
+
+    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x=>raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
+
+    if (win){
+      const reward = rewardByPower(bossPower);
+      p.point += reward;
+      raid.claimed[id] = true;
+      await savePlayer(p);
+      msgText += `\n보상: +${reward} 포인트`;
+    }
+
+    return res.json(replyText(msgText));
   }
 
   if (msg.startsWith("/전투")){
@@ -812,7 +911,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard("전투 결과", resultText, img));
   }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /랭킹 /강화"));
+  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화"));
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`RUN : ${PORT}`));
