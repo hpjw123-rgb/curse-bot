@@ -117,8 +117,8 @@ function getRandomEnergy(){
 const techniques = [
   {name:"무하한 술식",grade:"특급",power:100,type:"limitless"},
   {name:"십종영법술",grade:"특급",power:82,type:"mahoraga"},
-  {name:"모방 술식",grade:"특급",power:40,type:"copy"},
-  {name:"주령조술",grade:"특급",power:30,type:"curse_absorb"},
+  {name:"모방 술식",grade:"특급",power:50,type:"copy"},
+  {name:"주령조술",grade:"특급",power:50,type:"curse_absorb"},
 
   {name:"적혈조술",grade:"1급",power:80,type:"normal"},
   {name:"좌살박도",grade:"1급",power:77,type:"jackpot"},
@@ -132,7 +132,7 @@ const techniques = [
 
   {name:"어주자",grade:"3급",power:4,type:"fish"},
   {name:"추령주법",grade:"3급",power:60,type:"energy_counter"},
-  {name:"불사",grade:"3급",power:40,type:"immortal"},
+  {name:"불사",grade:"3급",power:50,type:"immortal"},
   {name:"천여주박",grade:"3급",power:0,type:"heavenly"},
   {name:"초미지규",grade:"3급",power:54,type:"normal"},
   {name:"재계상",grade:"3급",power:60,type:"normal"},
@@ -263,10 +263,10 @@ function createPlayer(name){
 function raw(p){return p.basePower + p.energyBonus;}
 
 function fishFactor(grade){
-  if (grade === "특급") return 2.0 ** 4;
-  if (grade === "1급") return 2.0 ** 3;
-  if (grade === "2급") return 2.0 ** 2;
-  return 2.0;
+  if (grade === "특급") return 2.2 ** 4;
+  if (grade === "1급") return 2.2 ** 3;
+  if (grade === "2급") return 2.2 ** 2;
+  return 2.2;
 }
 
 function heavenlyBase(grade){
