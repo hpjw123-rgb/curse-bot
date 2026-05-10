@@ -905,8 +905,8 @@ app.post("/chat", async (req, res) => {
     }
 
     const bossPower = raidPower();
-    const { maxP, maxV } = strongestParticipant();
-    const win = maxV >= bossPower;
+    const totalParticipantPower = Object.values(raid.participants).reduce((sum, p) => sum + p.power, 0);
+    const win = totalParticipantPower >= bossPower;
 
     let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x => raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
 
