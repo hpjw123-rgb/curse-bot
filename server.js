@@ -1,5 +1,5 @@
 // ==========================================
-// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + DRAMATIC NARRATION + TECH IMAGE MAP)
+// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + DRAMATIC NARRATION + TECH IMAGE MAP + MONGODB)
 // 카카오톡 챗봇
 // ==========================================
 
@@ -34,15 +34,64 @@ function randomFightImage(){
 }
 
 // ==========================================
+// MONGODB
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI;
+mongoose.connect(MONGO_URI, { autoIndex: true })
+  .then(() => console.log("MongoDB 연결 성공"))
+  .catch(err => console.log(err));
+
+const playerSchema = new mongoose.Schema({
+  userId: { type: String, unique: true, index: true },
+  nickname: String,
+  point: Number,
+  technique: String,
+  techniqueGrade: String,
+  techniqueType: String,
+  basePower: Number,
+  energyGrade: String,
+  energyBonus: Number,
+  enhance: Number,
+  absorbedPower: Number,
+  bloodStack: Number,
+  domainBlocked: Boolean,
+  domainName: String,
+  battleCount: Number,
+  battleWindow: String,
+  curseBattles: Number,
+  lastCurseHour: String
+}, { collection: "players" });
+
+const Player = mongoose.model("Player", playerSchema);
+
+// ==========================================
 // PLAYER STORAGE
 // ==========================================
 let players = {};
+
+async function loadPlayers(){
+  const data = await Player.find().lean();
+  data.forEach(p => { players[p.userId] = p; });
+  console.log("플레이어 로드 완료");
+}
+
+async function savePlayer(p){
+  await Player.updateOne({ userId: p.userId }, p, { upsert: true });
+}
+
+async function deletePlayer(userId){
+  await Player.deleteOne({ userId });
+  delete players[userId];
+}
+
+loadPlayers();
 
 // ==========================================
 // BATTLE LIMIT (KST, 6 HOURS)
 // ==========================================
 const BATTLE_LIMIT = 4;
 const HOURLY_CURSE_BATTLES = 5;
+const MAX_NAME_LEN = 10;
 
 function kstNow(){
   const now = new Date();
@@ -117,8 +166,8 @@ function getRandomEnergy(){
 const techniques = [
   {name:"무하한 술식",grade:"특급",power:100,type:"limitless"},
   {name:"십종영법술",grade:"특급",power:82,type:"mahoraga"},
-  {name:"모방 술식",grade:"특급",power:50,type:"copy"},
-  {name:"주령조술",grade:"특급",power:50,type:"curse_absorb"},
+  {name:"모방 술식",grade:"특급",power:40,type:"copy"},
+  {name:"주령조술",grade:"특급",power:30,type:"curse_absorb"},
 
   {name:"적혈조술",grade:"1급",power:80,type:"normal"},
   {name:"좌살박도",grade:"1급",power:77,type:"jackpot"},
@@ -132,7 +181,7 @@ const techniques = [
 
   {name:"어주자",grade:"3급",power:4,type:"fish"},
   {name:"추령주법",grade:"3급",power:60,type:"energy_counter"},
-  {name:"불사",grade:"3급",power:50,type:"immortal"},
+  {name:"불사",grade:"3급",power:40,type:"immortal"},
   {name:"천여주박",grade:"3급",power:0,type:"heavenly"},
   {name:"초미지규",grade:"3급",power:54,type:"normal"},
   {name:"재계상",grade:"3급",power:60,type:"normal"},
@@ -219,27 +268,21 @@ function aiLine(){return aiLines[Math.floor(Math.random()*aiLines.length)];}
 function aiResult(){return aiWin[Math.floor(Math.random()*aiWin.length)];}
 
 function domainEffectText(p){
-  return `🌌🌌🌌 영역전개 발동 🌌🌌🌌
-━━━━━━━━━━━━━━━━━━━━
-${p.nickname}의 영역이 세계를 덮는다.
-${p.domainName}
-공간이 뒤틀리고, 법칙이 뒤바뀐다.
-━━━━━━━━━━━━━━━━━━━━`;
+  return `🌌🌌🌌 영역전개 발동 🌌🌌🌌\n━━━━━━━━━━━━━━━━━━━━\n${p.nickname}의 영역이 세계를 덮는다.\n${p.domainName}\n공간이 뒤틀리고, 법칙이 뒤바뀐다.\n━━━━━━━━━━━━━━━━━━━━`;
 }
 
 function blackFlashText(){
-  return `⚫⚡⚫ 흑섬 발동 ⚫⚡⚫
-주력이 왜곡되며 0.000001초의 틈을 찢는다.
-충격이 현실을 관통한다.`;
+  return `⚫⚡⚫ 흑섬 발동 ⚫⚡⚫\n주력이 왜곡되며 0.000001초의 틈을 찢는다.\n충격이 현실을 관통한다.`;
 }
 
 // ==========================================
 // PLAYER CREATE
 // ==========================================
-function createPlayer(name){
+function createPlayer(name, userId){
   const tech = getRandomTechnique();
   const energy = getRandomEnergy();
   return {
+    userId,
     nickname: name,
     point: 0,
     technique: tech.name,
@@ -263,10 +306,10 @@ function createPlayer(name){
 function raw(p){return p.basePower + p.energyBonus;}
 
 function fishFactor(grade){
-  if (grade === "특급") return 2.2 ** 4;
-  if (grade === "1급") return 2.2 ** 3;
-  if (grade === "2급") return 2.2 ** 2;
-  return 2.2;
+  if (grade === "특급") return 2.0 ** 4;
+  if (grade === "1급") return 2.0 ** 3;
+  if (grade === "2급") return 2.0 ** 2;
+  return 2.0;
 }
 
 function heavenlyBase(grade){
@@ -615,12 +658,7 @@ function rankingText(){
 
 function statusText(p){
   const sp = statusPower(p);
-  return `[플레이어:${p.nickname}]
-{술식:${p.technique}(${p.enhance}강)}
-[전투력:${sp}]
-[소지 포인트:${p.point}]
-[주력량:${p.energyGrade}]
-[영역:${p.domainName.replace("❌ ","")}]`;
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ","")}]`;
 }
 
 // ==========================================
@@ -630,7 +668,7 @@ app.get("/", (req, res) => {
   res.send("ONLINE");
 });
 
-app.post("/chat", (req, res) => {
+app.post("/chat", async (req, res) => {
   const id = req.body?.userRequest?.user?.id;
   const msg = req.body?.userRequest?.utterance;
 
@@ -641,8 +679,11 @@ app.post("/chat", (req, res) => {
   if (msg.startsWith("/가입")){
     const name = msg.replace("/가입", "").trim();
     if (!isValidName(name)) return res.json(replyText("닉네임을 입력해주세요. 예: /가입 고죠"));
+    if (name.length > MAX_NAME_LEN) return res.json(replyText("닉네임은 최대 10자까지 가능합니다."));
     if (isDuplicateName(name)) return res.json(replyText("이미 사용 중인 닉네임입니다."));
-    players[id] = createPlayer(name);
+    const p = createPlayer(name, id);
+    players[id] = p;
+    await savePlayer(p);
     return res.json(replyText("가입 완료"));
   }
 
@@ -677,9 +718,11 @@ app.post("/chat", (req, res) => {
     if (Math.random() < rate){
       p.enhance = next;
       p.domainName = generateDomainName(p);
+      await savePlayer(p);
       const img = techniqueImageUrl(p);
       return res.json(replyCard(p.technique, `강화 성공! 현재 강화: ${p.enhance}\n` + statusText(p), img));
     }
+    await savePlayer(p);
     const img = techniqueImageUrl(p);
     return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate*100).toFixed(1)}%)\n` + statusText(p), img));
   }
@@ -697,19 +740,11 @@ app.post("/chat", (req, res) => {
 
     if (sp >= cp){
       p.point += 1;
-      return res.json(replyText(
-`👹 주령전투
-${p.nickname} vs 주령
-${sp} vs ${cp}
-주령 처치! 포인트 +1`
-      ));
+      await savePlayer(p);
+      return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1`));
     }
-    return res.json(replyText(
-`👹 주령전투
-${p.nickname} vs 주령
-${sp} vs ${cp}
-패배... 캐릭터는 유지됩니다.`
-    ));
+    await savePlayer(p);
+    return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배... 캐릭터는 유지됩니다.`));
   }
 
   if (msg.startsWith("/전투")){
@@ -722,7 +757,7 @@ ${sp} vs ${cp}
     if (!isValidName(t)) return res.json(replyText("대상 닉네임을 입력해주세요. 예: /전투 메구미"));
     const e = getPlayerByName(t);
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
-    if (e === p) return res.json(replyText("자기 자신과 전투할 수 없습니다."));
+    if (e.userId === p.userId) return res.json(replyText("자기 자신과 전투할 수 없습니다."));
 
     p.battleCount += 1;
 
@@ -731,53 +766,43 @@ ${sp} vs ${cp}
     let deathTriggered = false;
 
     if (r.mahoragaEvent){
-      let msgText = `⚔ 전투
-${p.nickname} vs ${e.nickname}
-${r.A.power} vs ${r.B.power}
-팔악검 이계신장 마허라 소환`;
+      let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n${r.A.power} vs ${r.B.power}\n팔악검 이계신장 마허라 소환`;
 
       if (p.techniqueType !== "immortal"){
-        delete players[id];
+        await deletePlayer(p.userId);
         msgText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
         if (top3.includes(p.nickname)) { msgText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
+      } else {
+        await savePlayer(p);
       }
 
-      const eid = Object.keys(players).find(k => players[k] === e);
+      const eid = Object.keys(players).find(k => players[k].nickname === e.nickname);
       if (e.techniqueType !== "immortal" && eid){
-        delete players[eid];
+        await deletePlayer(e.userId);
         msgText += `\n상대 캐릭터 ${e.nickname} 사망`;
         if (top3.includes(e.nickname)) { msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`; deathTriggered = true; }
+      } else {
+        await savePlayer(e);
       }
 
       const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
       return res.json(replyCard("전투 결과", msgText, img));
     }
 
-    let resultText =
-`⚔ 전투 개시
-${p.nickname} vs ${e.nickname}
-━━━━━━━━━━━━━━━━━━━━
-${r.A.log}
-${r.A.domainText||""}
-${r.A.blackText||""}
-━━━━━━━━━━━━━━━━━━━━
-전투력: ${r.A.power} vs ${r.B.power}
-${aiResult()}
-승자: ${r.winner.nickname}`;
+    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText||""}\n${r.A.blackText||""}\n━━━━━━━━━━━━━━━━━━━━\n전투력: ${r.A.power} vs ${r.B.power}\n${aiResult()}\n승자: ${r.winner.nickname}`;
 
     if (r.loser.techniqueType !== "immortal"){
-      const loserId = Object.keys(players).find(k => players[k] === r.loser);
-      if (loserId){
-        if (r.loser === p){
-          delete players[id];
-          resultText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
-          if (top3.includes(p.nickname)) { resultText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
-        } else {
-          delete players[loserId];
-          resultText += `\n상대 캐릭터 ${r.loser.nickname} 사망`;
-          if (top3.includes(r.loser.nickname)) { resultText += `\n알림: TOP3 주술사 ${r.loser.nickname} 사망`; deathTriggered = true; }
-        }
+      await deletePlayer(r.loser.userId);
+      if (r.loser.userId === p.userId){
+        resultText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
+        if (top3.includes(p.nickname)) { resultText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
+      } else {
+        resultText += `\n상대 캐릭터 ${r.loser.nickname} 사망`;
+        if (top3.includes(r.loser.nickname)) { resultText += `\n알림: TOP3 주술사 ${r.loser.nickname} 사망`; deathTriggered = true; }
       }
+    } else {
+      await savePlayer(p);
+      await savePlayer(e);
     }
 
     const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
