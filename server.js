@@ -1,7 +1,7 @@
-// ==========================================
-// 주술 배틀 RPG COMPLETE FINAL 4.0 (STABLE + RULESET + DRAMATIC NARRATION + TECH IMAGE MAP + MONGODB)
-// 카카오톡 챗봇
-// ==========================================
+// ==========================================================================
+// 주술 배틀 RPG COMPLETE FINAL 5.0 (INTEGRATED: SHOP + INVENTORY + CURTAIN)
+// 개발자: Mindlogic (SAIT 3 Pro)
+// ==========================================================================
 
 const express = require("express");
 const app = express();
@@ -13,16 +13,11 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // ==========================================
-// STATIC IMAGE
+// STATIC IMAGE & BASE URL
 // ==========================================
 app.use("/images", express.static(path.join(__dirname, "public/images")));
-
-// 반드시 실제 도메인으로 변경하세요.
 const BASE_URL = "https://curse-bot-40zs.onrender.com";
 
-// ==========================================
-// COMMON IMAGES
-// ==========================================
 const DEATH_IMAGE = "/images/death.png";
 const FIGHT_IMAGES = [
   "/images/fight scene1.jpg",
@@ -30,12 +25,12 @@ const FIGHT_IMAGES = [
   "/images/fight scene 3.jpg"
 ];
 
-function randomFightImage(){
-  return FIGHT_IMAGES[Math.floor(Math.random()*FIGHT_IMAGES.length)];
+function randomFightImage() {
+  return FIGHT_IMAGES[Math.floor(Math.random() * FIGHT_IMAGES.length)];
 }
 
 // ==========================================
-// MONGODB
+// MONGODB & PLAYER SCHEMA
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) console.log("MONGO_URI가 설정되지 않았습니다.");
@@ -62,27 +57,31 @@ const playerSchema = new mongoose.Schema({
   battleCount: Number,
   battleWindow: String,
   curseBattles: Number,
-  lastCurseHour: String
+  lastCurseHour: String,
+  // --- NEW: SHOP & INVENTORY FIELDS ---
+  curtainActiveUntil: Number, // 장막 만료 시간 (Timestamp)
+  inventory: [String],        // 주구 목록 (최대 3개)
+  equippedTool: String        // 현재 장착 중인 주구
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
 
 // ==========================================
-// PLAYER STORAGE
+// PLAYER STORAGE & DATABASE HELPERS
 // ==========================================
 let players = {};
 
-async function loadPlayers(){
+async function loadPlayers() {
   const data = await Player.find().lean();
   data.forEach(p => { players[p.userId] = p; });
   console.log("플레이어 로드 완료");
 }
 
-async function savePlayer(p){
+async function savePlayer(p) {
   await Player.updateOne({ userId: p.userId }, p, { upsert: true });
 }
 
-async function deletePlayer(userId){
+async function deletePlayer(userId) {
   await Player.deleteOne({ userId });
   delete players[userId];
 }
@@ -90,104 +89,38 @@ async function deletePlayer(userId){
 loadPlayers();
 
 // ==========================================
-// BATTLE LIMIT (KST, 6 HOURS)
+// TIME & LIMITS
 // ==========================================
 const BATTLE_LIMIT = 4;
 const HOURLY_CURSE_BATTLES = 5;
 const MAX_NAME_LEN = 10;
 
-function kstNow(){
+function kstNow() {
   const now = new Date();
   return new Date(now.getTime() + 9 * 60 * 60 * 1000);
 }
 
-function kstHourString(){
+function kstHourString() {
   const k = kstNow();
-  return k.toISOString().slice(0,13);
+  return k.toISOString().slice(0, 13);
 }
 
-function kstMinute(){
+function kstMinute() {
   return kstNow().getUTCMinutes();
 }
 
-function kst6hWindow(){
+function kst6hWindow() {
   const k = kstNow();
   const y = k.getUTCFullYear();
-  const m = String(k.getUTCMonth() + 1).padStart(2,"0");
-  const d = String(k.getUTCDate()).padStart(2,"0");
+  const m = String(k.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(k.getUTCDate()).padStart(2, "0");
   const h = Math.floor(k.getUTCHours() / 6) * 6;
-  const hh = String(h).padStart(2,"0");
+  const hh = String(h).padStart(2, "0");
   return `${y}-${m}-${d}T${hh}`;
 }
 
-function resetBattleIfNeeded(p){
-  const w = kst6hWindow();
-  if (p.battleWindow !== w){
-    p.battleWindow = w;
-    p.battleCount = 0;
-  }
-}
-
-function resetCurseIfNeeded(p){
-  const hour = kstHourString();
-  if (p.lastCurseHour !== hour){
-    p.lastCurseHour = hour;
-    p.curseBattles = 0;
-  }
-}
-
 // ==========================================
-// SPECIAL CURSE RAID
-// ==========================================
-const SPECIAL_CURSES = ["오리모토 리카","죠고","쿠로우루시","마히토","다곤","하나미"];
-const SPECIAL_BASE = 200;
-const SPECIAL_PER = 120;
-const SPECIAL_MAX = 2000;
-
-let raid = {
-  hour: null,
-  boss: null,
-  participants: {},
-  claimed: {}
-};
-
-function raidHour(){
-  return kstHourString();
-}
-
-function resetRaidIfNeeded(){
-  const h = raidHour();
-  if (raid.hour !== h){
-    raid.hour = h;
-    raid.boss = SPECIAL_CURSES[Math.floor(Math.random()*SPECIAL_CURSES.length)];
-    raid.participants = {};
-    raid.claimed = {};
-  }
-}
-
-function raidPower(){
-  const cnt = Object.keys(raid.participants).length;
-  return Math.min(SPECIAL_MAX, SPECIAL_BASE + cnt * SPECIAL_PER);
-}
-
-function rewardByPower(pw){
-  return Math.min(20, Math.max(1, Math.floor(pw / 200)));
-}
-
-// ==========================================
-// ENHANCE SYSTEM
-// ==========================================
-const ENHANCE_MAX = 11;
-const enhanceRates = {
-  1: 0.70, 2: 0.60, 3: 0.52, 4: 0.45, 5: 0.38,
-  6: 0.30, 7: 0.22, 8: 0.15, 9: 0.09, 10: 0.05, 11: 0.03
-};
-
-function enhanceCost(nextLevel){ return nextLevel; }
-function enhanceRate(nextLevel){ return enhanceRates[nextLevel] ?? 0.03; }
-
-// ==========================================
-// ENERGY SYSTEM
+// SHOP SYSTEM LOGIC (NEW)
 // ==========================================
 const energyGrades = [
   { name: "특급", chance: 6, bonus: 35 },
@@ -196,80 +129,93 @@ const energyGrades = [
   { name: "3급", chance: 60, bonus: 5 }
 ];
 
-function getRandomEnergy(){
-  let r = Math.random() * 100, sum = 0;
-  for (let g of energyGrades){
-    sum += g.chance;
-    if (r <= sum) return g;
-  }
-  return energyGrades[3];
-}
-
-// ==========================================
-// TECHNIQUES
-// ==========================================
-const techniques = [
-  {name:"무하한 술식",grade:"특급",power:100,type:"limitless"},
-  {name:"십종영법술",grade:"특급",power:82,type:"mahoraga"},
-  {name:"모방 술식",grade:"특급",power:40,type:"copy"},
-  {name:"주령조술",grade:"특급",power:30,type:"curse_absorb"},
-
-  {name:"적혈조술",grade:"1급",power:80,type:"normal"},
-  {name:"좌살박도",grade:"1급",power:77,type:"jackpot"},
-  {name:"투사주법",grade:"1급",power:67,type:"projection"},
-  {name:"주복사사",grade:"1급",power:59,type:"receipt"},
-  {name:"BOM-BA-YE",grade:"1급",power:62,type:"nullify"},
-
-  {name:"환수호박",grade:"2급",power:79,type:"suicide"},
-  {name:"무위전변",grade:"2급",power:74,type:"idle"},
-  {name:"성간비행",grade:"2급",power:69,type:"space"},
-
-  {name:"어주자",grade:"3급",power:4,type:"fish"},
-  {name:"추령주법",grade:"3급",power:60,type:"energy_counter"},
-  {name:"불사",grade:"3급",power:40,type:"immortal"},
-  {name:"천여주박",grade:"3급",power:0,type:"heavenly"},
-  {name:"초미지규",grade:"3급",power:54,type:"normal"},
-  {name:"재계상",grade:"3급",power:60,type:"normal"},
-  {name:"십획주법",grade:"3급",power:57,type:"ratio"}
+const SHOP_ITEMS = [
+  { id: "sukuna_finger", name: "스쿠나의 손가락", price: 5, type: "consumable" },
+  { id: "curtain", name: "장막", price: 10, type: "instant_buff" },
+  { id: "cursed_tool_placeholder", name: "주구(준비중)", price: 50, type: "tool" }
 ];
 
-function getRandomTechnique(){
-  return techniques[Math.floor(Math.random() * techniques.length)];
+let currentShopItems = [];
+let lastShopUpdateHour = "";
+
+function updateShopIfNeeded() {
+  const currentHour = kstHourString();
+  if (lastShopUpdateHour !== currentHour) {
+    // 매 정시마다 상품 목록을 2~3개 랜덤하게 구성
+    const shuffled = [...SHOP_ITEMS].sort(() => 0.5 - Math.random());
+    currentShopItems = shuffled.slice(0, Math.floor(Math.random() * 2) + 2);
+    lastShopUpdateHour = currentHour;
+    console.log("상점 상품이 갱신되었습니다.");
+  }
 }
 
 // ==========================================
-// TECHNIQUE IMAGE MAP (0~3, 4~7, 8~10, 11)
+// ENHANCE & SPECIAL SYSTEMS
 // ==========================================
-const techImages = {
-  "무하한 술식": ["/images/무하한.jpg","/images/무하한 1차.jpg","/images/무하한 2차.jpg","/images/무하한 최종.jpg"],
-  "십종영법술": ["/images/십종영법술.jpg","/images/십종영법술 1차.jpg","/images/십종영법술 2차.jpg","/images/십종영법술 최종.jpg"],
-  "모방 술식": ["/images/모방.jpg","/images/모방 1차.jpg","/images/모방 2차.jpg","/images/모방 최종.jpg"],
-  "주령조술": ["/images/주령조술.jpg","/images/주령조술 1차.jpg","/images/주령조술 2차.jpg","/images/주령조술 최종.jpg"],
-  "적혈조술": ["/images/적혈조술.jpg","/images/적혈조술 1차.jpg","/images/적혈조술 2차.jpg","/images/적혈조술 최종.jpg"],
-  "좌살박도": ["/images/좌살박도.jpg","/images/좌살박도 1차.jpg","/images/좌살박도 2차.jpg","/images/좌살박도 3차.jpg"],
-  "투사주법": ["/images/투사주법.jpg","/images/투사주법 1차.jpg","/images/투사주법 2차.jpg","/images/투사주법 최종.jpg"],
-  "주복사사": ["/images/주복사사.jpg","/images/주복사사 1차.jpg","/images/주복사사 2차.jpg","/images/주복사사 최종.jpg"],
-  "BOM-BA-YE": ["/images/봄바야.jpg","/images/봄바야 1차.jpg","/images/봄바야 2차.jpg","/images/봄바야 최종.jpg"],
-  "환수호박": ["/images/환수호박.jpg","/images/환수호박 1차.jpg","/images/환수호박 2차.jpg","/images/환수호박 최종.jpg"],
-  "무위전변": ["/images/무위전변.jpg","/images/무위전변 1차.jpg","/images/무위전변 2차.jpg","/images/무위전변 최종.jpg"],
-  "성간비행": ["/images/성간비행.jpg","/images/성간비행 1차.jpg","/images/성간비행 2차.jpg","/images/성간비행 최종.jpg"],
-  "어주자": ["/images/어주자.jpg","/images/어주자 1차.jpg","/images/어주자 2차.jpg","/images/어주자 최종.jpg"],
-  "추령주법": ["/images/추령주법.jpg","/images/추령주법 1차.jpg","/images/추령주법 2차.jpg","/images/추령주법 최종.jpg"],
-  "불사": ["/images/불사.jpg","/images/불사 1차.jpg","/images/불사 2차.jpg","/images/불사 최종.jpg"],
-  "천여주박": ["/images/천여주박.jpg","/images/천여주박 1차.jpg","/images/천여주박 2차.jpg","/images/천여주박 최종.jpg"],
-  "초미지규": ["/images/초미지규.jpg","/images/초미지규 1차.jpg","/images/초미지규 2차.jpg","/images/초미지규 최종.jpg"],
-  "재계상": ["/images/재계상.jpg","/images/재계상 1차.jpg","/images/재계상 2차.jpg","/images/재계상 최종.jpg"],
-  "십획주법": ["/images/십획주법.jpg","/images/십획주법 1차.jpg","/images/십획주법 2차.jpg","/images/십획주법 최종.jpg"]
+const ENHANCE_MAX = 11;
+const enhanceRates = {
+  1: 0.70, 2: 0.60, 3: 0.52, 4: 0.45, 5: 0.38,
+  6: 0.30, 7: 0.22, 8: 0.15, 9: 0.09, 10: 0.05, 11: 0.03
 };
 
-function enhanceTier(enhance){
+function enhanceCost(nextLevel) { return nextLevel; }
+function enhanceRate(nextLevel) { return enhanceRates[nextLevel] ?? 0.03; }
+
+// ==========================================
+// TECHNIQUES & IMAGE MAP
+// ==========================================
+const techniques = [
+  { name: "무하한 술식", grade: "특급", power: 100, type: "limitless" },
+  { name: "십종영법술", grade: "특급", power: 82, type: "mahoraga" },
+  { name: "모방 술식", grade: "특급", power: 40, type: "copy" },
+  { name: "주령조술", grade: "특급", power: 30, type: "curse_absorb" },
+  { name: "적혈조술", grade: "1급", power: 80, type: "normal" },
+  { name: "좌살박도", grade: "1급", power: 77, type: "jackpot" },
+  { name: "투사주법", grade: "1급", power: 67, type: "projection" },
+  { name: "주복사사", grade: "1급", power: 59, type: "receipt" },
+  { name: "BOM-BA-YE", grade: "1급", power: 62, type: "nullify" },
+  { name: "환수호박", grade: "2급", power: 79, type: "suicide" },
+  { name: "무위전변", grade: "2급", power: 74, type: "idle" },
+  { name: "성간비행", grade: "2급", power: 69, type: "space" },
+  { name: "어주자", grade: "3급", power: 4, type: "fish" },
+  { name: "추령주법", grade: "3급", power: 60, type: "energy_counter" },
+  { name: "불사", grade: "3급", power: 40, type: "immortal" },
+  { name: "천여주박", grade: "3급", power: 0, type: "heavenly" },
+  { name: "초미지규", grade: "3급", power: 54, type: "normal" },
+  { name: "재계상", grade: "3급", power: 60, type: "normal" },
+  { name: "십획주법", grade: "3급", power: 57, type: "ratio" }
+];
+
+const techImages = {
+  "무하한 술식": ["/images/무하한.jpg", "/images/무하한 1차.jpg", "/images/무하한 2차.jpg", "/images/무하한 최종.jpg"],
+  "십종영법술": ["/images/십종영법술.jpg", "/images/십종영법술 1차.jpg", "/images/십종영법술 2차.jpg", "/images/십종영법술 최종.jpg"],
+  "모방 술식": ["/images/모방.jpg", "/images/모방 1차.jpg", "/images/모방 2차.jpg", "/images/모방 최종.jpg"],
+  "주령조술": ["/images/주령조술.jpg", "/images/주령조술 1차.jpg", "/images/주령조술 2차.jpg", "/images/주령조술 최종.jpg"],
+  "적혈조술": ["/images/적혈조술.jpg", "/images/적혈조술 1차.jpg", "/images/적혈조술 2차.jpg", "/images/적혈조술 최종.jpg"],
+  "좌살박도": ["/images/좌살박도.jpg", "/images/좌살박도 1차.jpg", "/images/좌살박도 2차.jpg", "/images/좌살박도 3차.jpg"],
+  "투사주법": ["/images/투사주법.jpg", "/images/투사주법 1차.jpg", "/images/투사주법 2차.jpg", "/images/투사주법 최종.jpg"],
+  "주복사사": ["/images/주복사사.jpg", "/images/주복사사 1차.jpg", "/images/주복사사 2차.jpg", "/images/주복사사 최종.jpg"],
+  "BOM-BA-YE": ["/images/봄바야.jpg", "/images/봄바야 1차.jpg", "/images/봄바야 2차.jpg", "/images/봄바야 최종.jpg"],
+  "환수호박": ["/images/환수호박.jpg", "/images/환수호박 1차.jpg", "/images/환수호박 2차.jpg", "/images/환수호박 최종.jpg"],
+  "무위전변": ["/images/무위전변.jpg", "/images/무위전변 1차.jpg", "/images/무위전변 2차.jpg", "/images/무위전변 최종.jpg"],
+  "성간비행": ["/images/성간비행.jpg", "/images/성간비행 1차.jpg", "/images/성간비행 2차.jpg", "/images/성간비행 최종.jpg"],
+  "어주자": ["/images/어주자.jpg", "/images/어주자 1차.jpg", "/images/어주자 2차.jpg", "/images/어주자 최종.jpg"],
+  "추령주법": ["/images/추령주법.jpg", "/images/추령주법 1차.jpg", "/images/추령주법 2차.jpg", "/images/추령주법 최종.jpg"],
+  "불사": ["/images/불사.jpg", "/images/불사 1차.jpg", "/images/불사 2차.jpg", "/images/불사 최종.jpg"],
+  "천여주박": ["/images/천여주박.jpg", "/images/천여주박 1차.jpg", "/images/천여주박 2차.jpg", "/images/천여주박 최종.jpg"],
+  "초미지규": ["/images/초미지규.jpg", "/images/초미지규 1차.jpg", "/images/초미지규 2차.jpg", "/images/초미지규 최종.jpg"],
+  "재계상": ["/images/재계상.jpg", "/images/재계상 1차.jpg", "/images/재계상 2차.jpg", "/images/재계상 최종.jpg"],
+  "십획주법": ["/images/십획주법.jpg", "/images/십획주법 1차.jpg", "/images/십획주법 2차.jpg", "/images/십획주법 최종.jpg"]
+};
+
+function enhanceTier(enhance) {
   if (enhance >= 11) return 3;
   if (enhance >= 8) return 2;
   if (enhance >= 4) return 1;
   return 0;
 }
 
-function techniqueImageUrl(p){
+function techniqueImageUrl(p) {
   const arr = techImages[p.technique] || [];
   const idx = enhanceTier(p.enhance);
   const path = arr[idx] || "";
@@ -279,17 +225,17 @@ function techniqueImageUrl(p){
 // ==========================================
 // DOMAIN SYSTEM
 // ==========================================
-const prefix=["무한","뒤틀린","침식된","붕괴된","고요한","검은","왜곡된","저주받은"];
-const core=["공간","심연","세계","결계","감옥","현실","차원","무대"];
-const suffix=["의 지배","의 결계","의 단절","의 붕괴","의 침식","의 파편"];
+const prefix = ["무한", "뒤틀린", "침식된", "붕괴된", "고요한", "검은", "왜곡된", "저주받은"];
+const core = ["공간", "심연", "세계", "결계", "감옥", "현실", "차원", "무대"];
+const suffix = ["의 지배", "의 결계", "의 단절", "의 붕괴", "의 침식", "의 파편"];
 
-function pick(a){return a[Math.floor(Math.random()*a.length)];}
+function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 
-function generateDomainName(p){
-  let base=pick(prefix)+" "+pick(core)+pick(suffix);
-  if(p.enhance>=10) return "🌌 "+base+" [절대영역]";
-  if(p.enhance>=6) return "🌌 "+base+" [발현]";
-  if(p.enhance>=3) return "⚠️ "+base+" [불완전]";
+function generateDomainName(p) {
+  let base = pick(prefix) + " " + pick(core) + pick(suffix);
+  if (p.enhance >= 10) return "🌌 " + base + " [절대영역]";
+  if (p.enhance >= 6) return "🌌 " + base + " [발현]";
+  if (p.enhance >= 3) return "⚠️ " + base + " [불완전]";
   return "❌ 미발현";
 }
 
@@ -305,25 +251,36 @@ const aiLines = [
   "칼날 같은 주력이 서로의 숨통을 조인다."
 ];
 
-const aiWin=[
-"승자는 모든 것을 삼킨다.","패배자는 소멸한다.","전장은 침묵한다.","결과는 확정된다.","주술이 끝난다."
-];
+const aiWin = ["승자는 모든 것을 삼킨다.", "패배자는 소멸한다.", "전장은 침묵한다.", "결과는 확정된다.", "주술이 끝난다."];
 
-function aiLine(){return aiLines[Math.floor(Math.random()*aiLines.length)];}
-function aiResult(){return aiWin[Math.floor(Math.random()*aiWin.length)];}
+function aiLine() { return aiLines[Math.floor(Math.random() * aiLines.length)]; }
+function aiResult() { return aiWin[Math.floor(Math.random() * aiWin.length)]; }
 
-function domainEffectText(p){
+function domainEffectText(p) {
   return `🌌🌌🌌 영역전개 발동 🌌🌌🌌\n━━━━━━━━━━━━━━━━━━━━\n${p.nickname}의 영역이 세계를 덮는다.\n${p.domainName}\n공간이 뒤틀리고, 법칙이 뒤바뀐다.\n━━━━━━━━━━━━━━━━━━━━`;
 }
 
-function blackFlashText(){
+function blackFlashText() {
   return `⚫⚡⚫ 흑섬 발동 ⚫⚡⚫\n주력이 왜곡되며 0.000001초의 틈을 찢는다.\n충격이 현실을 관통한다.`;
 }
 
 // ==========================================
-// PLAYER CREATE
+// PLAYER CREATE & CORE MATH
 // ==========================================
-function createPlayer(name, userId){
+function getRandomTechnique() {
+  return techniques[Math.floor(Math.random() * techniques.length)];
+}
+
+function getRandomEnergy() {
+  let r = Math.random() * 100, sum = 0;
+  for (let g of energyGrades) {
+    sum += g.chance;
+    if (r <= sum) return { name: g.name, bonus: g.bonus };
+  }
+  return { name: "3급", bonus: 5 };
+}
+
+function createPlayer(name, userId) {
   const tech = getRandomTechnique();
   const energy = getRandomEnergy();
   return {
@@ -340,24 +297,28 @@ function createPlayer(name, userId){
     absorbedPower: 0,
     bloodStack: 0,
     domainBlocked: tech.type === "heavenly",
-    domainName: generateDomainName({enhance:0}),
+    domainName: generateDomainName({ enhance: 0 }),
     battleCount: 0,
     battleWindow: kst6hWindow(),
     curseBattles: 0,
-    lastCurseHour: kstHourString()
+    lastCurseHour: kstHourString(),
+    // --- NEW DEFAULT VALUES ---
+    curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000), // 가입 시 12시간 장막 제공
+    inventory: [],
+    equippedTool: null
   };
 }
 
-function raw(p){return p.basePower + p.energyBonus;}
+function raw(p) { return p.basePower + p.energyBonus; }
 
-function fishFactor(grade){
+function fishFactor(grade) {
   if (grade === "특급") return 2.2 ** 4;
   if (grade === "1급") return 2.2 ** 3;
   if (grade === "2급") return 2.2 ** 2;
   return 2.2;
 }
 
-function heavenlyBase(grade){
+function heavenlyBase(grade) {
   if (grade === "특급") return 4;
   if (grade === "1급") return 3;
   if (grade === "2급") return 2;
@@ -385,9 +346,9 @@ function clashDomain(a, b) {
 }
 
 // ==========================================
-// POWER CALC
+// POWER CALCULATION
 // ==========================================
-function calculatePower(p, e, opts = {}){
+function calculatePower(p, e, opts = {}) {
   let power = p.basePower;
   let log = "";
   let domainText = "";
@@ -398,13 +359,13 @@ function calculatePower(p, e, opts = {}){
   log += aiLine();
   if (opts.extraLog) log += " " + opts.extraLog;
 
-  if (!ignoreSpecial){
-    if (p.techniqueType === "fish"){
+  if (!ignoreSpecial) {
+    if (p.techniqueType === "fish") {
       power = p.basePower * fishFactor(p.energyGrade);
       log += " 어주자";
     }
 
-    if (p.techniqueType === "heavenly"){
+    if (p.techniqueType === "heavenly") {
       power = heavenlyBase(p.energyGrade) * 25;
     } else {
       power += p.energyBonus;
@@ -412,88 +373,88 @@ function calculatePower(p, e, opts = {}){
 
     power += p.absorbedPower;
 
-    if (p.techniqueType === "copy"){
+    if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
       power += Math.floor(enemyTotal / 2);
       log += " 모방";
     }
 
-    if (p.techniqueType === "curse_absorb"){
+    if (p.techniqueType === "curse_absorb") {
       power += e.energyBonus;
     }
 
-    if (p.techniqueType === "receipt"){
+    if (p.techniqueType === "receipt") {
       power += e.point * 10;
       log += " 주복사사";
     }
 
-    if (p.technique === "재계상"){
+    if (p.technique === "재계상") {
       const receipt = Math.floor(Math.random() * 100) + 1;
       power += receipt;
       log += ` 재계상(영수증 ${receipt})`;
     }
 
-    if (p.technique === "적혈조술"){
+    if (p.technique === "적혈조술") {
       power += p.bloodStack * 8;
       log += ` 혈식+${p.bloodStack}`;
     }
 
-    if (p.techniqueType === "energy_counter"){
+    if (p.techniqueType === "energy_counter") {
       power += e.energyBonus * 2;
       log += " 추령주법";
     }
 
     power *= Math.pow(1.2, p.enhance);
 
-    if (p.techniqueType === "mahoraga" && p.enhance >= 11){
+    if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
       power += Math.floor(power / 3);
       log += " 마허라 동기화";
     }
 
-    if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
+    if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
       power = 10; log += " 무하한 제한!";
     }
 
-    if (p.techniqueType === "jackpot" && Math.random() < 0.05){
+    if (p.techniqueType === "jackpot" && Math.random() < 0.05) {
       power *= 1.7;
       log += " 잭팟";
     }
 
-    if (p.techniqueType === "ratio" && Math.random() < 0.7){
+    if (p.techniqueType === "ratio" && Math.random() < 0.7) {
       power *= 1.3;
       log += " 십획";
     }
 
-    if (p.techniqueType === "projection"){
+    if (p.techniqueType === "projection") {
       const pr = raw(p);
       const er = raw(e);
-      if (pr < er){
+      if (pr < er) {
         power *= 1.2;
         log += " 투사주법";
-      } else if (pr > er){
+      } else if (pr > er) {
         power *= 2;
         log += " 투사주법";
       }
     }
 
-    if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")){
-      if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6){
-        if (!blockDomain){
+    if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")) {
+      if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6) {
+        if (!blockDomain) {
           const domainMult = p.techniqueType === "receipt" ? 2.2 : 2.0;
           power *= domainMult;
           log += " 영역전개";
           domainText = domainEffectText(p);
-          if (e.enhance >= 6 && Math.random() < 0.5){
-            domainText += "\n" + clashDomain(p, e);
+          if (e.enhance >= 6 && Math.random() < 0.5) {
+            domainText += "\\n" + clashDomain(p, e);
           }
         } else {
           log += " 영역전개(무효)";
-          domainText = `🌌 영역전개 무효\n${p.nickname}의 영역이 저지된다.`;
+          domainText = `🌌 영역전개 무효\\n${p.nickname}의 영역이 저지된다.`;
         }
       }
     }
 
-    if (Math.random() < 0.01){
+    if (Math.random() < 0.01) {
       power *= 2.5;
       log += " 흑섬";
       blackText = blackFlashText();
@@ -504,58 +465,89 @@ function calculatePower(p, e, opts = {}){
     power *= Math.pow(1.2, p.enhance);
   }
 
-  return {power: Math.floor(power), log, domainText, blackText};
+  return { power: Math.floor(power), log, domainText, blackText };
 }
 
-// ==========================================
-// STATUS POWER (STATIC BUFFS ONLY)
-// ==========================================
-function statusPower(p){
+function statusPower(p) {
   let power = p.basePower;
-
-  if (p.techniqueType === "fish"){
+  if (p.techniqueType === "fish") {
     power = p.basePower * fishFactor(p.energyGrade);
   }
-
-  if (p.techniqueType === "heavenly"){
+  if (p.techniqueType === "heavenly") {
     power = heavenlyBase(p.energyGrade) * 25;
   } else {
     power += p.energyBonus;
   }
-
   power += p.absorbedPower;
-
-  if (p.technique === "적혈조술"){
+  if (p.technique === "적혈조술") {
     power += p.bloodStack * 8;
   }
-
   power *= Math.pow(1.2, p.enhance);
-
-  if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급"){
+  if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
     power = 10;
   }
-
   return Math.floor(power);
 }
 
 // ==========================================
-// CURSE BATTLE
+// CURSE RAID SYSTEM
 // ==========================================
-function randomCursePowerByDigits(){
-  return Math.floor(Math.random() * 90) + 10;
+const SPECIAL_CURSES = ["오리모토 리카", "죠고", "쿠로우루시", "마히토", "다곤", "하나미"];
+const SPECIAL_BASE = 200;
+const SPECIAL_PER = 120;
+const SPECIAL_MAX = 2000;
+
+let raid = {
+  hour: null,
+  boss: null,
+  participants: {},
+  claimed: {}
+};
+
+function raidHour() { return kstHourString(); }
+
+function resetRaidIfNeeded() {
+  const h = raidHour();
+  if (raid.hour !== h) {
+    raid.hour = h;
+    raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)];
+    raid.participants = {};
+    raid.claimed = {};
+  }
+}
+
+function raidPower() {
+  const cnt = Object.keys(raid.participants).length;
+  return Math.min(SPECIAL_MAX, SPECIAL_BASE + cnt * SPECIAL_PER);
+}
+
+function rewardByPower(pw) {
+  return Math.min(20, Math.max(1, Math.floor(pw / 200)));
+}
+
+function strongestParticipant() {
+  let maxP = null;
+  let maxV = -1;
+  Object.values(raid.participants).forEach(p => {
+    if (p.power > maxV) {
+      maxV = p.power;
+      maxP = p;
+    }
+  });
+  return { maxP, maxV };
 }
 
 // ==========================================
 // BATTLE SYSTEM
 // ==========================================
-function top3Names(){
+function top3Names() {
   return Object.values(players)
-    .sort((a,b) => b.point - a.point)
-    .slice(0,3)
+    .sort((a, b) => b.point - a.point)
+    .slice(0, 3)
     .map(p => p.nickname);
 }
 
-function battle(a, b){
+function battle(a, b) {
   const aAnti = (a.technique === "초미지규" && Math.random() < 0.25);
   const bAnti = (b.technique === "초미지규" && Math.random() < 0.25);
 
@@ -574,40 +566,40 @@ function battle(a, b){
   let Ap = A.power;
   let Bp = B.power;
 
-  if (a.technique === "성간비행"){
+  if (a.technique === "성간비행") {
     const rate = (Ap < Bp) ? 0.35 : 0.20;
     Bp = Math.floor(Bp * (1 - rate));
-    A.log += ` 성간비행(-${Math.floor(rate*100)}%)`;
+    A.log += ` 성간비행(-${Math.floor(rate * 100)}%)`;
   }
-  if (b.technique === "성간비행"){
+  if (b.technique === "성간비행") {
     const rate = (Bp < Ap) ? 0.35 : 0.20;
     Ap = Math.floor(Ap * (1 - rate));
-    B.log += ` 성간비행(-${Math.floor(rate*100)}%)`;
+    B.log += ` 성간비행(-${Math.floor(rate * 100)}%)`;
   }
 
-  if (a.technique === "무위전변"){
+  if (a.technique === "무위전변") {
     const rate = (Math.floor(Math.random() * 21) + 15) / 100;
     const cut = Math.floor(Bp * rate);
     Bp -= cut;
     Ap += Math.floor(cut * 0.3);
-    A.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
+    A.log += ` 무위전변(-${Math.floor(rate * 100)}%)`;
   }
-  if (b.technique === "무위전변"){
+  if (b.technique === "무위전변") {
     const rate = (Math.floor(Math.random() * 21) + 15) / 100;
     const cut = Math.floor(Ap * rate);
     Ap -= cut;
     Bp += Math.floor(cut * 0.3);
-    B.log += ` 무위전변(-${Math.floor(rate*100)}%)`;
+    B.log += ` 무위전변(-${Math.floor(rate * 100)}%)`;
   }
 
-  if (a.technique === "BOM-BA-YE" && Ap < Bp){
+  if (a.technique === "BOM-BA-YE" && Ap < Bp) {
     const diff = Bp - Ap;
     if (diff >= 200) Ap = Math.floor(Ap * 2);
     else if (diff >= 100) Ap = Math.floor(Ap * 1.6);
     else if (diff >= 50) Ap = Math.floor(Ap * 1.3);
     A.log += " BOM-BA-YE";
   }
-  if (b.technique === "BOM-BA-YE" && Bp < Ap){
+  if (b.technique === "BOM-BA-YE" && Bp < Ap) {
     const diff = Ap - Bp;
     if (diff >= 200) Bp = Math.floor(Bp * 2);
     else if (diff >= 100) Bp = Math.floor(Bp * 1.6);
@@ -622,8 +614,8 @@ function battle(a, b){
   if (a.techniqueType === "mahoraga" && Math.random() < 0.2 && Bf.power < 300) mahoragaEvent = true;
   if (b.techniqueType === "mahoraga" && Math.random() < 0.2 && Af.power < 300) mahoragaEvent = true;
 
-  if (mahoragaEvent){
-    return {winner: null, loser: null, A: Af, B: Bf, mahoragaEvent: true};
+  if (mahoragaEvent) {
+    return { winner: null, loser: null, A: Af, B: Bf, mahoragaEvent: true };
   }
 
   let winner = Af.power >= Bf.power ? a : b;
@@ -631,42 +623,44 @@ function battle(a, b){
 
   winner.point += 5;
 
-  if (winner.techniqueType === "curse_absorb"){
-    winner.absorbedPower += Math.floor(raw(loser)/5);
+  if (winner.techniqueType === "curse_absorb") {
+    winner.absorbedPower += Math.floor(raw(loser) / 5);
   }
 
-  if (winner.technique === "적혈조술"){
+  if (winner.technique === "적혈조술") {
     winner.bloodStack += 1;
   }
 
-  return {winner, loser, A: Af, B: Bf, mahoragaEvent: false};
+  return { winner, loser, A: Af, B: Bf, mahoragaEvent: false };
 }
 
 // ==========================================
 // HELPERS
 // ==========================================
-function quickReplies(){
+function quickReplies() {
   return [
-    {label:"/가입", action:"message", messageText:"/가입 "},
-    {label:"/상태", action:"message", messageText:"/상태"},
-    {label:"/전투", action:"message", messageText:"/전투 "},
-    {label:"/주령전투", action:"message", messageText:"/주령전투"},
-    {label:"/특급주령", action:"message", messageText:"/특급주령"},
-    {label:"/랭킹", action:"message", messageText:"/랭킹"},
-    {label:"/강화", action:"message", messageText:"/강화"}
+    { label: "/가입", action: "message", messageText: "/가입 " },
+    { label: "/상태", action: "message", messageText: "/상태" },
+    { label: "/전투", action: "message", messageText: "/전투 " },
+    { label: "/주령전투", action: "message", messageText: "/주령전투" },
+    { label: "/특급주령", action: "message", messageText: "/특급주령" },
+    { label: "/랭킹", action: "message", messageText: "/랭킹" },
+    { label: "/강화", action: "message", messageText: "/강화" },
+    { label: "/상점", action: "message", messageText: "/상점" },
+    { label: "/인벤토리", action: "message", messageText: "/인벤토리" }
   ];
 }
 
-function replyText(text){
-  return {version:"2.0", template:{outputs:[{simpleText:{text}}], quickReplies: quickReplies()}};
+function replyText(text) {
+  return { version: "2.0", template: { outputs: [{ simpleText: { text } }], quickReplies: quickReplies() } };
 }
 
-function replyCard(title, desc, imageUrl){
+function replyCard(title, desc, imageUrl) {
   return {
-    version:"2.0",
-    template:{
-      outputs:[{
-        basicCard:{
+    version: "2.0",
+    template: {
+      outputs: [{
+        basicCard: {
           title,
           description: desc,
           thumbnail: { imageUrl }
@@ -677,90 +671,79 @@ function replyCard(title, desc, imageUrl){
   };
 }
 
-function getPlayerByName(name){
+function getPlayerByName(name) {
   return Object.values(players).find(p => p.nickname === name);
 }
 
-function isValidName(name){
+function isValidName(name) {
   return typeof name === "string" && name.trim().length >= 1;
 }
 
-function isDuplicateName(name){
+function isDuplicateName(name) {
   return Object.values(players).some(p => p.nickname === name);
 }
 
-function rankingText(){
+function rankingText() {
   const list = Object.values(players)
-    .sort((a,b) => b.point - a.point)
+    .sort((a, b) => b.point - a.point)
     .slice(0, 10);
 
   if (list.length === 0) return "랭킹 없음";
 
   let lines = ["🏆 랭킹 TOP 10"];
   list.forEach((p, i) => {
-    lines.push(`${i+1}위 ${p.nickname} · ${p.point}점`);
+    lines.push(`${i + 1}위 ${p.nickname} · ${p.point}점`);
   });
   return lines.join("\n");
 }
 
-function statusText(p){
+function statusText(p) {
   const sp = statusPower(p);
-  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ","")}]`;
-}
-
-function strongestParticipant(){
-  let maxP = null;
-  let maxV = -1;
-  Object.values(raid.participants).forEach(p => {
-    if (p.power > maxV){
-      maxV = p.power;
-      maxP = p;
-    }
-  });
-  return { maxP, maxV };
+  const curtainStatus = p.curtainActiveUntil > kstNow().getTime() ? "🛡️ 활성화" : "❌ 비활성";
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
 }
 
 // ==========================================
 // CHATBOT ROUTE
 // ==========================================
-app.get("/", (req, res) => {
-  res.send("ONLINE");
-});
+app.get("/", (req, res) => { res.send("ONLINE"); });
 
 app.post("/chat", async (req, res) => {
   const id = req.body?.userRequest?.user?.id;
   const msg = req.body?.userRequest?.utterance;
 
-  if (!id || !msg){
-    return res.json(replyText("요청 형식 오류"));
-  }
+  if (!id || !msg) return res.json(replyText("요청 형식 오류"));
 
-  if (msg.startsWith("/가입")){
+  updateShopIfNeeded(); // 상점 상품 갱신 체크
+  const p = players[id];
+
+  // 1. 가입
+  if (msg.startsWith("/가입")) {
     const name = msg.replace("/가입", "").trim();
     if (!isValidName(name)) return res.json(replyText("닉네임을 입력해주세요. 예: /가입 고죠"));
     if (name.length > MAX_NAME_LEN) return res.json(replyText("닉네임은 최대 10자까지 가능합니다."));
     if (isDuplicateName(name)) return res.json(replyText("이미 사용 중인 닉네임입니다."));
-    const p = createPlayer(name, id);
-    players[id] = p;
-    await savePlayer(p);
-    const img = techniqueImageUrl(p);
-    return res.json(replyCard(p.technique, statusText(p), img));
+    const newPlayer = createPlayer(name, id);
+    players[id] = newPlayer;
+    await savePlayer(newPlayer);
+    const img = techniqueImageUrl(newPlayer);
+    return res.json(replyCard(newPlayer.technique, statusText(newPlayer), img));
   }
 
-  const p = players[id];
   if (!p) return res.json(replyText("/가입 필요"));
 
-  if (msg === "/상태"){
+  // 2. 상태/랭킹/강화 (기존 유지)
+  if (msg === "/상태") {
     const img = techniqueImageUrl(p);
     return res.json(replyCard(p.technique, statusText(p), img));
   }
 
-  if (msg === "/랭킹"){
+  if (msg === "/랭킹") {
     return res.json(replyText(rankingText()));
   }
 
-  if (msg === "/강화"){
-    if (p.enhance >= ENHANCE_MAX){
+  if (msg === "/강화") {
+    if (p.enhance >= ENHANCE_MAX) {
       const img = techniqueImageUrl(p);
       return res.json(replyCard(p.technique, "강화 최대치입니다.\n" + statusText(p), img));
     }
@@ -768,14 +751,13 @@ app.post("/chat", async (req, res) => {
     const cost = enhanceCost(next);
     const rate = enhanceRate(next);
 
-    if (p.point < cost){
+    if (p.point < cost) {
       const img = techniqueImageUrl(p);
       return res.json(replyCard(p.technique, `포인트 부족 (필요 ${cost}점)\n` + statusText(p), img));
     }
 
     p.point -= cost;
-
-    if (Math.random() < rate){
+    if (Math.random() < rate) {
       p.enhance = next;
       p.domainName = generateDomainName(p);
       await savePlayer(p);
@@ -784,21 +766,97 @@ app.post("/chat", async (req, res) => {
     }
     await savePlayer(p);
     const img = techniqueImageUrl(p);
-    return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate*100).toFixed(1)}%)\n` + statusText(p), img));
+    return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), img));
   }
 
-  if (msg === "/주령전투"){
+  // 3. 상점 시스템 (NEW)
+  if (msg === "/상점") {
+    let shopMsg = "🛒 [정시 갱신 상점]\n━━━━━━━━━━━━\n";
+    currentShopItems.forEach((item, idx) => {
+      shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`;
+    });
+    shopMsg += "━━━━━━━━━━━━\n구매: /구매 [번호]";
+    return res.json(replyText(shopMsg));
+  }
+
+  if (msg.startsWith("/구매")) {
+    const idx = parseInt(msg.replace("/구매", "").trim()) - 1;
+    const item = currentShopItems[idx];
+
+    if (!item) return res.json(replyText("잘못된 번호입니다."));
+    if (p.point < item.price) return res.json(replyText("포인트가 부족합니다."));
+
+    p.point -= item.price;
+
+    if (item.id === "sukuna_finger") {
+      // 스쿠나의 손가락 로직 (50% 확률로 등급 1단계 상승, 특급 불가)
+      const currentIdx = energyGrades.findIndex(g => g.name === p.energyGrade);
+      if (currentIdx > 0 && Math.random() < 0.5) {
+        const nextGrade = energyGrades[currentIdx - 1];
+        p.energyGrade = nextGrade.name;
+        p.energyBonus = nextGrade.bonus;
+        await savePlayer(p);
+        return res.json(replyText(`✨ 스쿠나의 손가락 사용 성공!\n주력 등급이 [${p.energyGrade}]로 상승했습니다!`));
+      } else {
+        await savePlayer(p);
+        return res.json(replyText(`💀 스쿠나의 손가락을 사용했으나 실패했습니다... (등급 상승 실패)`));
+      }
+    } else if (item.id === "curtain") {
+      // 장막 로직 (12시간 적용)
+      p.curtainActiveUntil = kstNow().getTime() + (12 * 60 * 60 * 1000);
+      await savePlayer(p);
+      return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!\n(12시간 동안 다른 플레이어의 전투 요청을 방어합니다.)`));
+    } else if (item.id === "cursed_tool_placeholder") {
+      // 주구 구매 (인벤토리 추가)
+      if (p.inventory.length >= 3) {
+        return res.json(replyText("인벤토리가 가득 찼습니다. (최대 3개)"));
+      }
+      p.inventory.push("임시 주구"); // 나중에 실제 주구 이름으로 교체 예정
+      await savePlayer(p);
+      return res.json(replyText(`🗡️ 주구를 구매했습니다! 인벤토리를 확인하세요.`));
+    }
+
+    await savePlayer(p);
+    return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
+  }
+
+  // 4. 인벤토리 & 장착 (NEW)
+  if (msg === "/인벤토리") {
+    let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n`;
+    invMsg += `보관 중인 주구: ${p.inventory.length}/3\n`;
+    if (p.inventory.length === 0) {
+      invMsg += "비어 있음\n";
+    } else {
+      p.inventory.forEach((tool, idx) => {
+        invMsg += `${idx + 1}. ${tool} ${p.equippedTool === tool ? "✅(장착중)" : ""}\n`;
+      });
+      invMsg += "━━━━━━━━━━━━\n장착: /장착 [번호]";
+    }
+    return res.json(replyText(invMsg));
+  }
+
+  if (msg.startsWith("/장착")) {
+    const idx = parseInt(msg.replace("/장착", "").trim()) - 1;
+    if (p.inventory[idx]) {
+      p.equippedTool = p.inventory[idx];
+      await savePlayer(p);
+      return res.json(replyText(`⚔️ ${p.equippedTool}을(를) 장착했습니다!`));
+    }
+    return res.json(replyText("해당 번호의 주구가 없습니다."));
+  }
+
+  // 5. 주령 전투 (기존 유지)
+  if (msg === "/주령전투") {
     resetCurseIfNeeded(p);
-    if (p.curseBattles >= HOURLY_CURSE_BATTLES){
+    if (p.curseBattles >= HOURLY_CURSE_BATTLES) {
       return res.json(replyText(`이번 시간대 주령전투 횟수를 모두 사용했습니다. (1시간 ${HOURLY_CURSE_BATTLES}회)`));
     }
 
     p.curseBattles += 1;
-
     const sp = statusPower(p);
     const cp = randomCursePowerByDigits();
 
-    if (sp >= cp){
+    if (sp >= cp) {
       p.point += 1;
       await savePlayer(p);
       return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1`));
@@ -807,13 +865,26 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배... 캐릭터는 유지됩니다.`));
   }
 
-  if (msg === "/특급주령"){
+  function resetCurseIfNeeded(p) {
+    const hour = kstHourString();
+    if (p.lastCurseHour !== hour) {
+      p.lastCurseHour = hour;
+      p.curseBattles = 0;
+    }
+  }
+
+  function randomCursePowerByDigits() {
+    return Math.floor(Math.random() * 90) + 10;
+  }
+
+  // 6. 특급 주령 (기존 유지)
+  if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
     const hour = raidHour();
 
-    if (minute < 30){
-      if (!raid.participants[id]){
+    if (minute < 30) {
+      if (!raid.participants[id]) {
         const sp = statusPower(p);
         raid.participants[id] = { userId: id, nickname: p.nickname, power: sp };
         return res.json(replyText(`특급 주령 대기열 참가 완료\n보스: ${raid.boss}\n현재 참가자 수: ${Object.keys(raid.participants).length}`));
@@ -821,15 +892,15 @@ app.post("/chat", async (req, res) => {
       return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.\n보스: ${raid.boss}`));
     }
 
-    if (!raid.participants[id]){
+    if (!raid.participants[id]) {
       return res.json(replyText("현재 회차에 참가하지 않았습니다."));
     }
 
-    if (raid.claimed[id]){
+    if (raid.claimed[id]) {
       return res.json(replyText("이미 보상을 수령했습니다."));
     }
 
-    if (raid.hour !== hour){
+    if (raid.hour !== hour) {
       return res.json(replyText("보상 기간이 종료되었습니다."));
     }
 
@@ -837,9 +908,9 @@ app.post("/chat", async (req, res) => {
     const { maxP, maxV } = strongestParticipant();
     const win = maxV >= bossPower;
 
-    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x=>raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
+    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x => raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
 
-    if (win){
+    if (win) {
       const reward = rewardByPower(bossPower);
       p.point += reward;
       raid.claimed[id] = true;
@@ -850,9 +921,20 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(msgText));
   }
 
-  if (msg.startsWith("/전투")){
+  function resetRaidIfNeeded() {
+    const h = raidHour();
+    if (raid.hour !== h) {
+      raid.hour = h;
+      raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)];
+      raid.participants = {};
+      raid.claimed = {};
+    }
+  }
+
+  // 7. 전투 (장막 로직 통합)
+  if (msg.startsWith("/전투")) {
     resetBattleIfNeeded(p);
-    if (p.battleCount >= BATTLE_LIMIT){
+    if (p.battleCount >= BATTLE_LIMIT) {
       return res.json(replyText(`전투 횟수를 모두 사용했습니다. (6시간 ${BATTLE_LIMIT}회)`));
     }
 
@@ -862,16 +944,29 @@ app.post("/chat", async (req, res) => {
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
     if (e.userId === p.userId) return res.json(replyText("자기 자신과 전투할 수 없습니다."));
 
+    // --- [장막 로직 적용] ---
+    // 1. 상대방이 장막을 펼치고 있는가?
+    if (e.curtainActiveUntil > kstNow().getTime()) {
+      return res.json(replyText(`🛡️ ${e.nickname}님은 현재 장막을 펼치고 있어 전투를 할 수 없습니다!`));
+    }
+
+    // 2. 내가 전투를 걸면 나의 장막은 사라진다.
+    if (p.curtainActiveUntil > kstNow().getTime()) {
+      p.curtainActiveUntil = 0;
+      await savePlayer(p);
+    }
+    // -----------------------
+
     p.battleCount += 1;
 
     const top3 = top3Names();
     const r = battle(p, e);
     let deathTriggered = false;
 
-    if (r.mahoragaEvent){
+    if (r.mahoragaEvent) {
       let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n${r.A.power} vs ${r.B.power}\n팔악검 이계신장 마허라 소환`;
 
-      if (p.techniqueType !== "immortal"){
+      if (p.techniqueType !== "immortal") {
         await deletePlayer(p.userId);
         msgText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
         if (top3.includes(p.nickname)) { msgText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
@@ -879,7 +974,7 @@ app.post("/chat", async (req, res) => {
         await savePlayer(p);
       }
 
-      if (e.techniqueType !== "immortal"){
+      if (e.techniqueType !== "immortal") {
         await deletePlayer(e.userId);
         msgText += `\n상대 캐릭터 ${e.nickname} 사망`;
         if (top3.includes(e.nickname)) { msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`; deathTriggered = true; }
@@ -891,11 +986,11 @@ app.post("/chat", async (req, res) => {
       return res.json(replyCard("전투 결과", msgText, img));
     }
 
-    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText||""}\n${r.A.blackText||""}\n━━━━━━━━━━━━━━━━━━━━\n전투력: ${r.A.power} vs ${r.B.power}\n${aiResult()}\n승자: ${r.winner.nickname}`;
+    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n전투력: ${r.A.power} vs ${r.B.power}\n${aiResult()}\n승자: ${r.winner.nickname}`;
 
-    if (r.loser.techniqueType !== "immortal"){
+    if (r.loser.techniqueType !== "immortal") {
       await deletePlayer(r.loser.userId);
-      if (r.loser.userId === p.userId){
+      if (r.loser.userId === p.userId) {
         resultText += `\n당신의 캐릭터가 사망했습니다. /가입으로 다시 생성하세요.`;
         if (top3.includes(p.nickname)) { resultText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
       } else {
@@ -911,7 +1006,15 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard("전투 결과", resultText, img));
   }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화"));
+  function resetBattleIfNeeded(p) {
+    const w = kst6hWindow();
+    if (p.battleWindow !== w) {
+      p.battleWindow = w;
+      p.battleCount = 0;
+    }
+  }
+
+  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리"));
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`RUN : ${PORT}`));
