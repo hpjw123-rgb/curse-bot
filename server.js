@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.1 (INTEGRATED: SHOP + INVENTORY + CURTAIN + RAID FIX)
+// 주술 배틀 RPG COMPLETE FINAL 5.2 (FIXED: RAID REWARD LOGIC)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -58,17 +58,13 @@ const playerSchema = new mongoose.Schema({
   battleWindow: String,
   curseBattles: Number,
   lastCurseHour: String,
-  // --- SHOP & INVENTORY FIELDS ---
-  curtainActiveUntil: Number, // 장막 만료 시간 (Timestamp)
-  inventory: [String],        // 주구 목록 (최대 3개)
-  equippedTool: String        // 현재 장착 중인 주구
+  curtainActiveUntil: Number,
+  inventory: [String],
+  equippedTool: String
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
 
-// ==========================================
-// PLAYER STORAGE & DATABASE HELPERS
-// ==========================================
 let players = {};
 
 async function loadPlayers() {
@@ -144,7 +140,6 @@ function updateShopIfNeeded() {
     const shuffled = [...SHOP_ITEMS].sort(() => 0.5 - Math.random());
     currentShopItems = shuffled.slice(0, Math.floor(Math.random() * 2) + 2);
     lastShopUpdateHour = currentHour;
-    console.log("상점 상품이 갱신되었습니다.");
   }
 }
 
@@ -878,6 +873,7 @@ app.post("/chat", async (req, res) => {
     const minute = kstMinute();
     const hour = raidHour();
 
+    // 1. 대기열 참가 단계 (0분 ~ 29분)
     if (minute < 30) {
       if (!raid.participants[id]) {
         const sp = statusPower(p);
@@ -887,14 +883,18 @@ app.post("/chat", async (req, res) => {
       return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.\n보스: ${raid.boss}`));
     }
 
+    // 2. 보상 수령 단계 (30분 ~ 59분)
+    // 참가자 명단에 없는 유저는 '참가하지 않은 유저'로 간주
     if (!raid.participants[id]) {
-      return res.json(replyText("현재 회차에 참가하지 않았습니다."));
+      return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
     }
 
+    // 이미 보상을 받은 유저인지 확인
     if (raid.claimed[id]) {
       return res.json(replyText("이미 보상을 수령했습니다."));
     }
 
+    // 혹시라도 시간이 지나 회차가 바뀌었는지 체크
     if (raid.hour !== hour) {
       return res.json(replyText("보상 기간이 종료되었습니다."));
     }
@@ -902,7 +902,7 @@ app.post("/chat", async (req, res) => {
     const bossPower = raidPower();
     const { maxP, maxV } = strongestParticipant();
     
-    // 합산 전투력 계산
+    // 모든 참가자의 전투력 합산
     const totalParticipantPower = Object.values(raid.participants).reduce((sum, part) => sum + part.power, 0);
     const win = totalParticipantPower >= bossPower;
 
@@ -942,7 +942,6 @@ app.post("/chat", async (req, res) => {
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
     if (e.userId === p.userId) return res.json(replyText("자기 자신과 전투할 수 없습니다."));
 
-    // --- [장막 로직 적용] ---
     if (e.curtainActiveUntil > kstNow().getTime()) {
       return res.json(replyText(`🛡️ ${e.nickname}님은 현재 장막을 펼치고 있어 전투를 할 수 없습니다!`));
     }
@@ -951,7 +950,6 @@ app.post("/chat", async (req, res) => {
       p.curtainActiveUntil = 0;
       await savePlayer(p);
     }
-    // -----------------------
 
     p.battleCount += 1;
 
