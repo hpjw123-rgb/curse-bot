@@ -393,7 +393,7 @@ function calculatePower(p, e, opts = {}) {
     }
 
     if (p.technique === "적혈조술") {
-      power += p.bloodStack * 8;
+      power += p.bloodStack * 1;
       log += ` 혈식+${p.bloodStack}`;
     }
 
@@ -478,7 +478,7 @@ function statusPower(p) {
   }
   power += p.absorbedPower;
   if (p.technique === "적혈조술") {
-    power += p.bloodStack * 8;
+    power += p.bloodStack * 1;
   }
   power *= Math.pow(1.2, p.enhance);
   if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
