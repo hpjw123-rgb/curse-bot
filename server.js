@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.2 (FIXED: RAID REWARD LOGIC)
+// 주술 배틀 RPG COMPLETE FINAL 5.3 (BALANCE UPDATE)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -161,7 +161,7 @@ function enhanceRate(nextLevel) { return enhanceRates[nextLevel] ?? 0.03; }
 const techniques = [
   { name: "무하한 술식", grade: "특급", power: 100, type: "limitless" },
   { name: "십종영법술", grade: "특급", power: 82, type: "mahoraga" },
-  { name: "모방 술식", grade: "특급", power: 40, type: "copy" },
+  { name: "모방 술식", grade: "특급", power: 52, type: "copy" },
   { name: "주령조술", grade: "특급", power: 30, type: "curse_absorb" },
   { name: "적혈조술", grade: "1급", power: 80, type: "normal" },
   { name: "좌살박도", grade: "1급", power: 77, type: "jackpot" },
@@ -172,12 +172,12 @@ const techniques = [
   { name: "무위전변", grade: "2급", power: 74, type: "idle" },
   { name: "성간비행", grade: "2급", power: 69, type: "space" },
   { name: "어주자", grade: "3급", power: 4, type: "fish" },
-  { name: "추령주법", grade: "3급", power: 60, type: "energy_counter" },
-  { name: "불사", grade: "3급", power: 40, type: "immortal" },
+  { name: "추령주법", grade: "3급", power: 71, type: "energy_counter" },
+  { name: "불사", grade: "3급", power: 72, type: "immortal" },
   { name: "천여주박", grade: "3급", power: 0, type: "heavenly" },
-  { name: "초미지규", grade: "3급", power: 54, type: "normal" },
+  { name: "초미지규", grade: "3급", power: 64, type: "normal" },
   { name: "재계상", grade: "3급", power: 60, type: "normal" },
-  { name: "십획주법", grade: "3급", power: 57, type: "ratio" }
+  { name: "십획주법", grade: "3급", power: 67, type: "ratio" }
 ];
 
 const techImages = {
@@ -368,7 +368,7 @@ function calculatePower(p, e, opts = {}) {
 
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
-      power += Math.floor(enemyTotal / 2);
+      power += Math.floor(enemyTotal * 0.8); // [MODIFIED] 상대 전투력 80% 복사
       log += " 모방";
     }
 
@@ -408,7 +408,7 @@ function calculatePower(p, e, opts = {}) {
       power = 10; log += " 무하한 제한!";
     }
 
-    if (p.techniqueType === "jackpot" && Math.random() < 0.05) {
+    if (p.techniqueType === "jackpot" && Math.random() < 0.0777) { // [MODIFIED] 잭팟 확률 7.77%
       power *= 1.7;
       log += " 잭팟";
     }
@@ -431,18 +431,28 @@ function calculatePower(p, e, opts = {}) {
     }
 
     if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")) {
-      if (p.enhance >= 6 && !p.domainBlocked && Math.random() < 0.6) {
-        if (!blockDomain) {
-          const domainMult = p.techniqueType === "receipt" ? 2.2 : 2.0;
-          power *= domainMult;
-          log += " 영역전개";
-          domainText = domainEffectText(p);
-          if (e.enhance >= 6 && Math.random() < 0.5) {
-            domainText += "\\n" + clashDomain(p, e);
+      if (p.enhance >= 6 && !p.domainBlocked) {
+        // [MODIFIED] 영역전개 확률: 강화 레벨에 따라 상승
+        let domainChance = 0.6; 
+        if (p.enhance >= 7) domainChance = 0.65;
+        if (p.enhance >= 8) domainChance = 0.70;
+        if (p.enhance >= 9) domainChance = 0.75;
+        if (p.enhance >= 10) domainChance = 0.80;
+        if (p.enhance >= 11) domainChance = 0.85;
+
+        if (Math.random() < domainChance) {
+          if (!blockDomain) {
+            const domainMult = p.techniqueType === "receipt" ? 2.2 : 2.0;
+            power *= domainMult;
+            log += " 영역전개";
+            domainText = domainEffectText(p);
+            if (e.enhance >= 6 && Math.random() < 0.5) {
+              domainText += "\\n" + clashDomain(p, e);
+            }
+          } else {
+            log += " 영역전개(무효)";
+            domainText = `🌌 영역전개 무효\\n${p.nickname}의 영역이 저지된다.`;
           }
-        } else {
-          log += " 영역전개(무효)";
-          domainText = `🌌 영역전개 무효\\n${p.nickname}의 영역이 저지된다.`;
         }
       }
     }
@@ -467,7 +477,7 @@ function statusPower(p) {
     power = p.basePower * fishFactor(p.energyGrade);
   }
   if (p.techniqueType === "heavenly") {
-    power = heavenlyBase(p.energyGrade) * 25;
+    power = heavenlyBase(p.energyGrade) * 30; // [MODIFIED] 천여주박 30배 상향
   } else {
     power += p.energyBonus;
   }
@@ -873,7 +883,6 @@ app.post("/chat", async (req, res) => {
     const minute = kstMinute();
     const hour = raidHour();
 
-    // 1. 대기열 참가 단계 (0분 ~ 29분)
     if (minute < 30) {
       if (!raid.participants[id]) {
         const sp = statusPower(p);
@@ -883,18 +892,14 @@ app.post("/chat", async (req, res) => {
       return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.\n보스: ${raid.boss}`));
     }
 
-    // 2. 보상 수령 단계 (30분 ~ 59분)
-    // 참가자 명단에 없는 유저는 '참가하지 않은 유저'로 간주
     if (!raid.participants[id]) {
       return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
     }
 
-    // 이미 보상을 받은 유저인지 확인
     if (raid.claimed[id]) {
       return res.json(replyText("이미 보상을 수령했습니다."));
     }
 
-    // 혹시라도 시간이 지나 회차가 바뀌었는지 체크
     if (raid.hour !== hour) {
       return res.json(replyText("보상 기간이 종료되었습니다."));
     }
@@ -902,7 +907,6 @@ app.post("/chat", async (req, res) => {
     const bossPower = raidPower();
     const { maxP, maxV } = strongestParticipant();
     
-    // 모든 참가자의 전투력 합산
     const totalParticipantPower = Object.values(raid.participants).reduce((sum, part) => sum + part.power, 0);
     const win = totalParticipantPower >= bossPower;
 
