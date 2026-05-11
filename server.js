@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.0 (INTEGRATED: SHOP + INVENTORY + CURTAIN)
+// 주술 배틀 RPG COMPLETE FINAL 5.1 (INTEGRATED: SHOP + INVENTORY + CURTAIN + RAID FIX)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -58,7 +58,7 @@ const playerSchema = new mongoose.Schema({
   battleWindow: String,
   curseBattles: Number,
   lastCurseHour: String,
-  // --- NEW: SHOP & INVENTORY FIELDS ---
+  // --- SHOP & INVENTORY FIELDS ---
   curtainActiveUntil: Number, // 장막 만료 시간 (Timestamp)
   inventory: [String],        // 주구 목록 (최대 3개)
   equippedTool: String        // 현재 장착 중인 주구
@@ -120,7 +120,7 @@ function kst6hWindow() {
 }
 
 // ==========================================
-// SHOP SYSTEM LOGIC (NEW)
+// SHOP SYSTEM LOGIC
 // ==========================================
 const energyGrades = [
   { name: "특급", chance: 6, bonus: 35 },
@@ -141,7 +141,6 @@ let lastShopUpdateHour = "";
 function updateShopIfNeeded() {
   const currentHour = kstHourString();
   if (lastShopUpdateHour !== currentHour) {
-    // 매 정시마다 상품 목록을 2~3개 랜덤하게 구성
     const shuffled = [...SHOP_ITEMS].sort(() => 0.5 - Math.random());
     currentShopItems = shuffled.slice(0, Math.floor(Math.random() * 2) + 2);
     lastShopUpdateHour = currentHour;
@@ -302,8 +301,7 @@ function createPlayer(name, userId) {
     battleWindow: kst6hWindow(),
     curseBattles: 0,
     lastCurseHour: kstHourString(),
-    // --- NEW DEFAULT VALUES ---
-    curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000), // 가입 시 12시간 장막 제공
+    curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
     inventory: [],
     equippedTool: null
   };
@@ -714,7 +712,7 @@ app.post("/chat", async (req, res) => {
 
   if (!id || !msg) return res.json(replyText("요청 형식 오류"));
 
-  updateShopIfNeeded(); // 상점 상품 갱신 체크
+  updateShopIfNeeded();
   const p = players[id];
 
   // 1. 가입
@@ -732,7 +730,7 @@ app.post("/chat", async (req, res) => {
 
   if (!p) return res.json(replyText("/가입 필요"));
 
-  // 2. 상태/랭킹/강화 (기존 유지)
+  // 2. 기본 명령어
   if (msg === "/상태") {
     const img = techniqueImageUrl(p);
     return res.json(replyCard(p.technique, statusText(p), img));
@@ -769,7 +767,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), img));
   }
 
-  // 3. 상점 시스템 (NEW)
+  // 3. 상점 시스템
   if (msg === "/상점") {
     let shopMsg = "🛒 [정시 갱신 상점]\n━━━━━━━━━━━━\n";
     currentShopItems.forEach((item, idx) => {
@@ -789,7 +787,6 @@ app.post("/chat", async (req, res) => {
     p.point -= item.price;
 
     if (item.id === "sukuna_finger") {
-      // 스쿠나의 손가락 로직 (50% 확률로 등급 1단계 상승, 특급 불가)
       const currentIdx = energyGrades.findIndex(g => g.name === p.energyGrade);
       if (currentIdx > 0 && Math.random() < 0.5) {
         const nextGrade = energyGrades[currentIdx - 1];
@@ -802,16 +799,14 @@ app.post("/chat", async (req, res) => {
         return res.json(replyText(`💀 스쿠나의 손가락을 사용했으나 실패했습니다... (등급 상승 실패)`));
       }
     } else if (item.id === "curtain") {
-      // 장막 로직 (12시간 적용)
       p.curtainActiveUntil = kstNow().getTime() + (12 * 60 * 60 * 1000);
       await savePlayer(p);
       return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!\n(12시간 동안 다른 플레이어의 전투 요청을 방어합니다.)`));
     } else if (item.id === "cursed_tool_placeholder") {
-      // 주구 구매 (인벤토리 추가)
       if (p.inventory.length >= 3) {
         return res.json(replyText("인벤토리가 가득 찼습니다. (최대 3개)"));
       }
-      p.inventory.push("임시 주구"); // 나중에 실제 주구 이름으로 교체 예정
+      p.inventory.push("임시 주구");
       await savePlayer(p);
       return res.json(replyText(`🗡️ 주구를 구매했습니다! 인벤토리를 확인하세요.`));
     }
@@ -820,7 +815,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
   }
 
-  // 4. 인벤토리 & 장착 (NEW)
+  // 4. 인벤토리 & 장착
   if (msg === "/인벤토리") {
     let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n`;
     invMsg += `보관 중인 주구: ${p.inventory.length}/3\n`;
@@ -845,7 +840,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText("해당 번호의 주구가 없습니다."));
   }
 
-  // 5. 주령 전투 (기존 유지)
+  // 5. 주령 전투
   if (msg === "/주령전투") {
     resetCurseIfNeeded(p);
     if (p.curseBattles >= HOURLY_CURSE_BATTLES) {
@@ -877,7 +872,7 @@ app.post("/chat", async (req, res) => {
     return Math.floor(Math.random() * 90) + 10;
   }
 
-  // 6. 특급 주령 (기존 유지)
+  // 6. 특급 주령 (FIXED VERSION)
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
@@ -905,10 +900,13 @@ app.post("/chat", async (req, res) => {
     }
 
     const bossPower = raidPower();
-    const totalParticipantPower = Object.values(raid.participants).reduce((sum, p) => sum + p.power, 0);
+    const { maxP, maxV } = strongestParticipant();
+    
+    // 합산 전투력 계산
+    const totalParticipantPower = Object.values(raid.participants).reduce((sum, part) => sum + part.power, 0);
     const win = totalParticipantPower >= bossPower;
 
-    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x => raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
+    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${Object.keys(raid.participants).map(x => raid.participants[x].nickname).join(", ")}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n총 합산 전투력: ${totalParticipantPower}\n결과: ${win ? "승리" : "패배"}`;
 
     if (win) {
       const reward = rewardByPower(bossPower);
@@ -945,12 +943,10 @@ app.post("/chat", async (req, res) => {
     if (e.userId === p.userId) return res.json(replyText("자기 자신과 전투할 수 없습니다."));
 
     // --- [장막 로직 적용] ---
-    // 1. 상대방이 장막을 펼치고 있는가?
     if (e.curtainActiveUntil > kstNow().getTime()) {
       return res.json(replyText(`🛡️ ${e.nickname}님은 현재 장막을 펼치고 있어 전투를 할 수 없습니다!`));
     }
 
-    // 2. 내가 전투를 걸면 나의 장막은 사라진다.
     if (p.curtainActiveUntil > kstNow().getTime()) {
       p.curtainActiveUntil = 0;
       await savePlayer(p);
