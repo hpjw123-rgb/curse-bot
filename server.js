@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.3 (BALANCE UPDATE)
+// 주술 배틀 RPG COMPLETE FINAL 5.5 (BALANCE: COPY 36% + RANKING ALL)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -368,7 +368,7 @@ function calculatePower(p, e, opts = {}) {
 
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
-      power += Math.floor(enemyTotal * 0.8); // [MODIFIED] 상대 전투력 80% 복사
+      power += Math.floor(enemyTotal * 0.36); // [MODIFIED] 모방 술식 36% 복사
       log += " 모방";
     }
 
@@ -432,7 +432,6 @@ function calculatePower(p, e, opts = {}) {
 
     if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")) {
       if (p.enhance >= 6 && !p.domainBlocked) {
-        // [MODIFIED] 영역전개 확률: 강화 레벨에 따라 상승
         let domainChance = 0.6; 
         if (p.enhance >= 7) domainChance = 0.65;
         if (p.enhance >= 8) domainChance = 0.70;
@@ -477,7 +476,7 @@ function statusPower(p) {
     power = p.basePower * fishFactor(p.energyGrade);
   }
   if (p.techniqueType === "heavenly") {
-    power = heavenlyBase(p.energyGrade) * 30; // [MODIFIED] 천여주박 30배 상향
+    power = heavenlyBase(p.energyGrade) * 30;
   } else {
     power += p.energyBonus;
   }
@@ -496,9 +495,9 @@ function statusPower(p) {
 // CURSE RAID SYSTEM
 // ==========================================
 const SPECIAL_CURSES = ["오리모토 리카", "죠고", "쿠로우루시", "마히토", "다곤", "하나미"];
-const SPECIAL_BASE = 200;
-const SPECIAL_PER = 120;
-const SPECIAL_MAX = 2000;
+const SPECIAL_BASE = 500;
+const SPECIAL_PER = 320;
+const SPECIAL_MAX = 4000;
 
 let raid = {
   hour: null,
@@ -687,13 +686,13 @@ function isDuplicateName(name) {
 }
 
 function rankingText() {
+  // [MODIFIED] 모든 유저가 보이도록 slice 제거 및 제목 변경
   const list = Object.values(players)
-    .sort((a, b) => b.point - a.point)
-    .slice(0, 10);
+    .sort((a, b) => b.point - a.point);
 
   if (list.length === 0) return "랭킹 없음";
 
-  let lines = ["🏆 랭킹 TOP 10"];
+  let lines = ["🏆 전체 주술사 랭킹"];
   list.forEach((p, i) => {
     lines.push(`${i + 1}위 ${p.nickname} · ${p.point}점`);
   });
