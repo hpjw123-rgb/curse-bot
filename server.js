@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.5 (BALANCE: COPY 36% + RANKING ALL)
+// 주술 배틀 RPG COMPLETE FINAL 5.6 (ULTIMATE BALANCE: CURSED TOOLS INTEGRATED)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -116,7 +116,7 @@ function kst6hWindow() {
 }
 
 // ==========================================
-// SHOP SYSTEM LOGIC
+// SHOP & CURSED TOOLS DATA
 // ==========================================
 const energyGrades = [
   { name: "특급", chance: 6, bonus: 35 },
@@ -128,8 +128,21 @@ const energyGrades = [
 const SHOP_ITEMS = [
   { id: "sukuna_finger", name: "스쿠나의 손가락", price: 5, type: "consumable" },
   { id: "curtain", name: "장막", price: 10, type: "instant_buff" },
-  { id: "cursed_tool_placeholder", name: "주구(준비중)", price: 50, type: "tool" }
+  { id: "ranseido", name: "「난생도」", price: 55, type: "tool" },
+  { id: "heavenly_spear", name: "「천역모」", price: 90, type: "tool" },
+  { id: "black_rope", name: "「흑승」", price: 80, type: "tool" },
+  { id: "shinmu_kai", name: "「신무해」", price: 75, type: "tool" },
+  { id: "dragon_bone", name: "「용골」", price: 85, type: "tool" }
 ];
+
+// 주구 상세 데이터
+const CURSED_TOOLS_DATA = {
+  "「난생도」": { power: 25, effect: "폭주" },
+  "「천역모」": { power: 25, effect: "반전" },
+  "「흑승」": { power: 20, effect: "봉인" },
+  "「신무해」": { power: 20, effect: "적응" },
+  "「용골」": { power: 30, effect: "흡수" }
+};
 
 let currentShopItems = [];
 let lastShopUpdateHour = "";
@@ -352,6 +365,11 @@ function calculatePower(p, e, opts = {}) {
   log += aiLine();
   if (opts.extraLog) log += " " + opts.extraLog;
 
+  // [NEW] 주구 효과 적용 (Base Power 추가)
+  if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
+    power += CURSED_TOOLS_DATA[p.equippedTool].power;
+  }
+
   if (!ignoreSpecial) {
     if (p.techniqueType === "fish") {
       power = p.basePower * fishFactor(p.energyGrade);
@@ -368,7 +386,7 @@ function calculatePower(p, e, opts = {}) {
 
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
-      power += Math.floor(enemyTotal * 0.36); // [MODIFIED] 모방 술식 36% 복사
+      power += Math.floor(enemyTotal * 0.36); 
       log += " 모방";
     }
 
@@ -377,7 +395,7 @@ function calculatePower(p, e, opts = {}) {
     }
 
     if (p.techniqueType === "receipt") {
-      power += e.point * 10;
+      power += e.point * 2;
       log += " 주복사사";
     }
 
@@ -393,7 +411,7 @@ function calculatePower(p, e, opts = {}) {
     }
 
     if (p.techniqueType === "energy_counter") {
-      power += e.energyBonus * 2;
+      power += e.energyBonus * 4;
       log += " 추령주법";
     }
 
@@ -408,13 +426,13 @@ function calculatePower(p, e, opts = {}) {
       power = 10; log += " 무하한 제한!";
     }
 
-    if (p.techniqueType === "jackpot" && Math.random() < 0.0777) { // [MODIFIED] 잭팟 확률 7.77%
+    if (p.techniqueType === "jackpot" && Math.random() < 0.0777) {
       power *= 1.7;
       log += " 잭팟";
     }
 
     if (p.techniqueType === "ratio" && Math.random() < 0.7) {
-      power *= 1.3;
+      power *= 1.5;
       log += " 십획";
     }
 
@@ -435,6 +453,7 @@ function calculatePower(p, e, opts = {}) {
         let domainChance = 0.6; 
         if (p.enhance >= 7) domainChance = 0.65;
         if (p.enhance >= 8) domainChance = 0.70;
+        if (p.enhance >= 9) domainChance.push = 0.75; // Correction for potential typo in logic
         if (p.enhance >= 9) domainChance = 0.75;
         if (p.enhance >= 10) domainChance = 0.80;
         if (p.enhance >= 11) domainChance = 0.85;
@@ -467,7 +486,54 @@ function calculatePower(p, e, opts = {}) {
     power *= Math.pow(1.2, p.enhance);
   }
 
+  // [NEW] 주구 특수 효과 적용 (전투력 계산 완료 후 적용)
+  if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
+    const tool = CURSED_TOOLS_DATA[p.equippedTool];
+    if (tool.effect === "폭주") {
+      // 난생도: 상대가 더 강하면 전투력 +20
+      const enemyPower = e.basePower + e.energyBonus + e.absorbedPower;
+      if (power < enemyPower) {
+        power += 20;
+        log += " [난생도 폭주!]";
+      }
+    } else if (tool.effect === "반전") {
+      // 천역모: 상대의 강화 보너스 억제
+      const enemyEnhanceBonus = e.enhance * (e.basePower * 0.2); // 임의의 강화 가중치 계산식
+      // 실제 구현 시에는 e.enhance를 직접 사용하는 것이 더 정확함
+      // 여기서는 단순화하여 상대의 최종 파워에서 30을 빼는 방식으로 처리
+      // (calculatePower 내부에서 이미 계산된 power를 조절하기 위해 로직 위치 중요)
+    } else if (tool.effect === "적응") {
+      // 신무해: 상대 기본 파워가 높으면 +15
+      if (e.basePower > p.basePower) {
+        power += 15;
+        log += " [신무해 적응!]";
+      }
+    } else if (tool.effect === "흡수") {
+      // 용골: 상대 최종 파워의 10% 흡수
+      power += Math.floor(e.basePower * 0.1); 
+      log += " [용골 흡수!]";
+    }
+  }
+
   return { power: Math.floor(power), log, domainText, blackText };
+}
+
+// [NEW] 전투 시 주구 특수 효과(상대 감소)를 적용하기 위해 보정된 calculatePower 호출 로직
+function calculatePowerWithToolEffects(p, e, opts = {}) {
+  let result = calculatePower(p, e, opts);
+  
+  // 천역모 효과 (상대 강화 억제)
+  if (p.equippedTool === "「천역모」") {
+    result.power -= 30;
+    result.log += " [천역모 억제]";
+  }
+  // 흑승 효과 (상대 최종 파워 삭감)
+  if (p.equippedTool === "「흑승」") {
+    result.power -= 40;
+    result.log += " [흑승 봉인]";
+  }
+
+  return result;
 }
 
 function statusPower(p) {
@@ -488,6 +554,12 @@ function statusPower(p) {
   if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
     power = 10;
   }
+  
+  // 주구 기본 파워 추가
+  if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
+    power += CURSED_TOOLS_DATA[p.equippedTool].power;
+  }
+  
   return Math.floor(power);
 }
 
@@ -550,16 +622,17 @@ function top3Names() {
 }
 
 function battle(a, b) {
-  const aAnti = (a.technique === "초미지규" && Math.random() < 0.25);
-  const bAnti = (b.technique === "초미지규" && Math.random() < 0.25);
+  const aAnti = (a.technique === "초미지규" && Math.random() < 0.7);
+  const bAnti = (b.technique === "초미지규" && Math.random() < 0.7);
 
-  const A = calculatePower(a, b, {
+  // 주구 효과(천역모/흑승)가 반영된 파워 계산을 위해 보정 함수 사용
+  const A = calculatePowerWithToolEffects(a, b, {
     ignoreSpecial: bAnti,
     blockDomain: (b.technique === "환수호박"),
     extraLog: aAnti ? "초미지규 발동" : ""
   });
 
-  const B = calculatePower(b, a, {
+  const B = calculatePowerWithToolEffects(b, a, {
     ignoreSpecial: aAnti,
     blockDomain: (a.technique === "환수호박"),
     extraLog: bAnti ? "초미지규 발동" : ""
@@ -686,7 +759,6 @@ function isDuplicateName(name) {
 }
 
 function rankingText() {
-  // [MODIFIED] 모든 유저가 보이도록 slice 제거 및 제목 변경
   const list = Object.values(players)
     .sort((a, b) => b.point - a.point);
 
@@ -702,7 +774,8 @@ function rankingText() {
 function statusText(p) {
   const sp = statusPower(p);
   const curtainStatus = p.curtainActiveUntil > kstNow().getTime() ? "🛡️ 활성화" : "❌ 비활성";
-  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
+  const toolStatus = p.equippedTool ? `\n[장착 주구: ${p.equippedTool}]` : "";
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]${toolStatus}`;
 }
 
 // ==========================================
@@ -807,12 +880,16 @@ app.post("/chat", async (req, res) => {
       await savePlayer(p);
       return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!\n(12시간 동안 다른 플레이어의 전투 요청을 방어합니다.)`));
     } else if (item.id === "cursed_tool_placeholder") {
+      // 주구 구매 로직 (실제 주구 이름 mapping 필요)
+      const toolNames = Object.keys(CURSED_TOOLS_DATA);
+      const selectedTool = toolNames[Math.floor(Math.random() * toolNames.length)];
+      
       if (p.inventory.length >= 3) {
         return res.json(replyText("인벤토리가 가득 찼습니다. (최대 3개)"));
       }
-      p.inventory.push("임시 주구");
+      p.inventory.push(selectedTool);
       await savePlayer(p);
-      return res.json(replyText(`🗡️ 주구를 구매했습니다! 인벤토리를 확인하세요.`));
+      return res.json(replyText(`🗡️ 주구 [${selectedTool}]을(를) 구매했습니다! 인벤토리를 확인하세요.`));
     }
 
     await savePlayer(p);
