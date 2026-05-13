@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 5.6 (ULTIMATE BALANCE: CURSED TOOLS INTEGRATED)
+// 주술 배틀 RPG COMPLETE FINAL 5.7 (FIXED: INVENTORY & SHOP SYSTEM)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -135,7 +135,6 @@ const SHOP_ITEMS = [
   { id: "dragon_bone", name: "「용골」", price: 85, type: "tool" }
 ];
 
-// 주구 상세 데이터
 const CURSED_TOOLS_DATA = {
   "「난생도」": { power: 25, effect: "폭주" },
   "「천역모」": { power: 25, effect: "반전" },
@@ -453,7 +452,6 @@ function calculatePower(p, e, opts = {}) {
         let domainChance = 0.6; 
         if (p.enhance >= 7) domainChance = 0.65;
         if (p.enhance >= 8) domainChance = 0.70;
-        if (p.enhance >= 9) domainChance.push = 0.75; // Correction for potential typo in logic
         if (p.enhance >= 9) domainChance = 0.75;
         if (p.enhance >= 10) domainChance = 0.80;
         if (p.enhance >= 11) domainChance = 0.85;
@@ -490,26 +488,19 @@ function calculatePower(p, e, opts = {}) {
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     const tool = CURSED_TOOLS_DATA[p.equippedTool];
     if (tool.effect === "폭주") {
-      // 난생도: 상대가 더 강하면 전투력 +20
       const enemyPower = e.basePower + e.energyBonus + e.absorbedPower;
       if (power < enemyPower) {
         power += 20;
         log += " [난생도 폭주!]";
       }
     } else if (tool.effect === "반전") {
-      // 천역모: 상대의 강화 보너스 억제
-      const enemyEnhanceBonus = e.enhance * (e.basePower * 0.2); // 임의의 강화 가중치 계산식
-      // 실제 구현 시에는 e.enhance를 직접 사용하는 것이 더 정확함
-      // 여기서는 단순화하여 상대의 최종 파워에서 30을 빼는 방식으로 처리
-      // (calculatePower 내부에서 이미 계산된 power를 조절하기 위해 로직 위치 중요)
+      // (상대방의 강화 억제 로직은 calculatePowerWithToolEffects에서 처리)
     } else if (tool.effect === "적응") {
-      // 신무해: 상대 기본 파워가 높으면 +15
       if (e.basePower > p.basePower) {
         power += 15;
         log += " [신무해 적응!]";
       }
     } else if (tool.effect === "흡수") {
-      // 용골: 상대 최종 파워의 10% 흡수
       power += Math.floor(e.basePower * 0.1); 
       log += " [용골 흡수!]";
     }
@@ -518,21 +509,16 @@ function calculatePower(p, e, opts = {}) {
   return { power: Math.floor(power), log, domainText, blackText };
 }
 
-// [NEW] 전투 시 주구 특수 효과(상대 감소)를 적용하기 위해 보정된 calculatePower 호출 로직
 function calculatePowerWithToolEffects(p, e, opts = {}) {
   let result = calculatePower(p, e, opts);
-  
-  // 천역모 효과 (상대 강화 억제)
   if (p.equippedTool === "「천역모」") {
     result.power -= 30;
     result.log += " [천역모 억제]";
   }
-  // 흑승 효과 (상대 최종 파워 삭감)
   if (p.equippedTool === "「흑승」") {
     result.power -= 40;
     result.log += " [흑승 봉인]";
   }
-
   return result;
 }
 
@@ -554,12 +540,9 @@ function statusPower(p) {
   if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
     power = 10;
   }
-  
-  // 주구 기본 파워 추가
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     power += CURSED_TOOLS_DATA[p.equippedTool].power;
   }
-  
   return Math.floor(power);
 }
 
@@ -625,7 +608,6 @@ function battle(a, b) {
   const aAnti = (a.technique === "초미지규" && Math.random() < 0.7);
   const bAnti = (b.technique === "초미지규" && Math.random() < 0.7);
 
-  // 주구 효과(천역모/흑승)가 반영된 파워 계산을 위해 보정 함수 사용
   const A = calculatePowerWithToolEffects(a, b, {
     ignoreSpecial: bAnti,
     blockDomain: (b.technique === "환수호박"),
@@ -836,10 +818,12 @@ app.post("/chat", async (req, res) => {
       p.enhance = next;
       p.domainName = generateDomainName(p);
       await savePlayer(p);
+      players[p.userId] = p; // 메모리 동기화
       const img = techniqueImageUrl(p);
       return res.json(replyCard(p.technique, `강화 성공! 현재 강화: ${p.enhance}\n` + statusText(p), img));
     }
     await savePlayer(p);
+    players[p.userId] = p; // 메모리 동기화
     const img = techniqueImageUrl(p);
     return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), img));
   }
@@ -870,29 +854,35 @@ app.post("/chat", async (req, res) => {
         p.energyGrade = nextGrade.name;
         p.energyBonus = nextGrade.bonus;
         await savePlayer(p);
+        players[p.userId] = p;
         return res.json(replyText(`✨ 스쿠나의 손가락 사용 성공!\n주력 등급이 [${p.energyGrade}]로 상승했습니다!`));
       } else {
         await savePlayer(p);
+        players[p.userId] = p;
         return res.json(replyText(`💀 스쿠나의 손가락을 사용했으나 실패했습니다... (등급 상승 실패)`));
       }
     } else if (item.id === "curtain") {
       p.curtainActiveUntil = kstNow().getTime() + (12 * 60 * 60 * 1000);
       await savePlayer(p);
+      players[p.userId] = p;
       return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!\n(12시간 동안 다른 플레이어의 전투 요청을 방어합니다.)`));
-    } else if (item.id === "cursed_tool_placeholder") {
-      // 주구 구매 로직 (실제 주구 이름 mapping 필요)
-      const toolNames = Object.keys(CURSED_TOOLS_DATA);
-      const selectedTool = toolNames[Math.floor(Math.random() * toolNames.length)];
+    } else if (item.type === "tool") {
+      // [수정됨] 주구 구매 로직 정상화
+      const toolName = item.name;
       
       if (p.inventory.length >= 3) {
         return res.json(replyText("인벤토리가 가득 찼습니다. (최대 3개)"));
       }
-      p.inventory.push(selectedTool);
+
+      p.inventory.push(toolName);
       await savePlayer(p);
-      return res.json(replyText(`🗡️ 주구 [${selectedTool}]을(를) 구매했습니다! 인벤토리를 확인하세요.`));
+      players[p.userId] = p; // 메모리 동기화 필수
+
+      return res.json(replyText(`🗡️ 주구 [${toolName}]을(를) 구매했습니다! 인벤토리를 확인하세요.`));
     }
 
     await savePlayer(p);
+    players[p.userId] = p;
     return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
   }
 
@@ -916,6 +906,7 @@ app.post("/chat", async (req, res) => {
     if (p.inventory[idx]) {
       p.equippedTool = p.inventory[idx];
       await savePlayer(p);
+      players[p.userId] = p; // 메모리 동기화
       return res.json(replyText(`⚔️ ${p.equippedTool}을(를) 장착했습니다!`));
     }
     return res.json(replyText("해당 번호의 주구가 없습니다."));
@@ -935,9 +926,11 @@ app.post("/chat", async (req, res) => {
     if (sp >= cp) {
       p.point += 1;
       await savePlayer(p);
+      players[p.userId] = p;
       return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1`));
     }
     await savePlayer(p);
+    players[p.userId] = p;
     return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배... 캐릭터는 유지됩니다.`));
   }
 
@@ -993,6 +986,7 @@ app.post("/chat", async (req, res) => {
       p.point += reward;
       raid.claimed[id] = true;
       await savePlayer(p);
+      players[p.userId] = p; // 메모리 동기화
       msgText += `\n보상: +${reward} 포인트`;
     }
 
@@ -1029,6 +1023,7 @@ app.post("/chat", async (req, res) => {
     if (p.curtainActiveUntil > kstNow().getTime()) {
       p.curtainActiveUntil = 0;
       await savePlayer(p);
+      players[p.userId] = p;
     }
 
     p.battleCount += 1;
@@ -1046,6 +1041,7 @@ app.post("/chat", async (req, res) => {
         if (top3.includes(p.nickname)) { msgText += `\n알림: TOP3 주술사 ${p.nickname} 사망`; deathTriggered = true; }
       } else {
         await savePlayer(p);
+        players[p.userId] = p;
       }
 
       if (e.techniqueType !== "immortal") {
@@ -1054,6 +1050,7 @@ app.post("/chat", async (req, res) => {
         if (top3.includes(e.nickname)) { msgText += `\n알림: TOP3 주술사 ${e.nickname} 사망`; deathTriggered = true; }
       } else {
         await savePlayer(e);
+        players[e.userId] = e;
       }
 
       const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
@@ -1073,7 +1070,9 @@ app.post("/chat", async (req, res) => {
       }
     } else {
       await savePlayer(p);
+      players[p.userId] = p;
       await savePlayer(e);
+      players[e.userId] = e;
     }
 
     const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : (BASE_URL + randomFightImage());
