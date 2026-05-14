@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG COMPLETE FINAL 6.2 (ERROR-FREE VERSION)
+// 주술 배틀 RPG COMPLETE FINAL 6.3 (FINAL ERROR-FIXED VERSION)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -11,6 +11,14 @@ require("dotenv").config();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// ==========================================
+// CONSTANTS (오류 방지를 위해 최상단에 명확히 선언)
+// ==========================================
+const BATTLE_LIMIT = 4;
+const HOURLY_CURSE_BATTLES = 5;
+const MAX_NAME_LEN = 10;
+const MAX_POINTS_PER_6H = 20;
 
 // ==========================================
 // STATIC IMAGE & BASE URL
@@ -61,7 +69,7 @@ const playerSchema = new mongoose.Schema({
   curtainActiveUntil: Number,
   inventory: [String],
   equippedTool: String,
-  earnedPointsHistory: [{ amount: Number, timestamp: Number }] 
+  earnedPointsHistory: { type: Array, default: [] } // 기본값 설정으로 TypeError 방지
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
@@ -86,7 +94,7 @@ async function deletePlayer(userId) {
 loadPlayers();
 
 // ==========================================
-// UTILITY & HELPER FUNCTIONS (정의 위치 상단 배치)
+// UTILITY & HELPER FUNCTIONS
 // ==========================================
 
 function kstNow() {
@@ -113,18 +121,17 @@ function kst6hWindow() {
   return `${y}-${m}-${d}T${hh}`;
 }
 
-// [수정] aiResult 함수를 상단으로 이동하여 ReferenceError 방지
 function aiResult() {
   const results = ["결전의 끝에 승자가 결정되었습니다.", "압도적인 주력의 차이가 승패를 가릅니다.", "처절한 사투 끝에 생존자가 남았습니다."];
   return results[Math.floor(Math.random() * results.length)];
 }
 
-const MAX_POINTS_PER_6H = 20;
-
 function getRecentEarnedPoints(p) {
+  // p.earnedPointsHistory가 undefined인 경우를 대비한 방어 코드
+  const history = p.earnedPointsHistory || [];
   const sixHoursAgo = kstNow().getTime() - (6 * 60 * 60 * 1000);
-  p.earnedPointsHistory = p.earnedPointsHistory.filter(h => h.timestamp > sixHoursAgo);
-  return p.earnedPointsHistory.reduce((sum, h) => sum + h.amount, 0);
+  const filtered = history.filter(h => h.timestamp > sixHoursAgo);
+  return filtered.reduce((sum, h) => sum + h.amount, 0);
 }
 
 function tryAddBattlePoints(p, amount) {
@@ -133,6 +140,7 @@ function tryAddBattlePoints(p, amount) {
     return { success: false, remaining: Math.max(0, MAX_POINTS_PER_6H - currentEarned) };
   }
   p.point += amount;
+  if (!p.earnedPointsHistory) p.earnedPointsHistory = [];
   p.earnedPointsHistory.push({ amount: amount, timestamp: kstNow().getTime() });
   return { success: true };
 }
@@ -614,7 +622,6 @@ app.post("/chat", async (req, res) => {
   updateShopIfNeeded();
   const p = players[id];
 
-  // 1. 가입
   if (msg.startsWith("/가입")) {
     const name = msg.replace("/가입", "").trim();
     if (!isValidName(name)) return res.json(replyText("닉네임을 입력해주세요. 예: /가입 고죠"));
@@ -628,14 +635,11 @@ app.post("/chat", async (req, res) => {
   }
   if (!p) return res.json(replyText("/가입 필요"));
 
-  // 2. 기본 명령어
   if (msg === "/상태") {
     const img = techniqueImageUrl(p);
     return res.json(replyCard(p.technique, statusText(p), img));
   }
-  if (msg === "/랭킹") {
-    return res.json(replyText(rankingText()));
-  }
+  if (msg === "/랭킹") return res.json(replyText(rankingText()));
   if (msg === "/강화") {
     if (p.enhance >= ENHANCE_MAX) {
       const img = techniqueImageUrl(p);
@@ -660,7 +664,6 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), img));
   }
 
-  // 3. 상점
   if (msg === "/상점") {
     let shopMsg = "🛒 [정시 갱신 상점]\n━━━━━━━━━━━━\n";
     currentShopItems.forEach((item, idx) => { shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`; });
@@ -698,7 +701,6 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
   }
 
-  // 4. 인벤토리 & 장막해제
   if (msg === "/인벤토리") {
     let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n보관 중인 주구: ${p.inventory.length}/3\n`;
     if (p.inventory.length === 0) invMsg += "비어 있음\n";
@@ -724,7 +726,6 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText("✨ 장막을 거두었습니다. 이제 전투가 가능합니다."));
   }
 
-  // 5. 주령 전투
   if (msg === "/주령전투") {
     const hour = kstHourString();
     if (p.lastCurseHour !== hour) { p.lastCurseHour = hour; p.curseBattles = 0; }
@@ -740,7 +741,6 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배...`));
   }
 
-  // 6. 특급 주령
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute(); const hour = raidHour();
@@ -773,7 +773,6 @@ app.post("/chat", async (req, res) => {
     const h = raidHour(); if (raid.hour !== h) { raid.hour = h; raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)]; raid.participants = {}; raid.claimed = {}; }
   }
 
-  // 7. 전투
   if (msg.startsWith("/전투")) {
     const w = kst6hWindow();
     if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
@@ -800,13 +799,12 @@ app.post("/chat", async (req, res) => {
       return res.json(replyCard("전투 결과", msgText, deathTriggered ? (BASE_URL + DEATH_IMAGE) : randomFightImage()));
     }
 
-    // [Anti-Abuse Point Application]
     if (r.winner) {
       const pointResult = tryAddBattlePoints(r.winner, 5);
       if (pointResult.success) {
         pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
       } else {
-        r.winner.point -= 5; // Rollback
+        r.winner.point -= 5; 
         pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 전투 포인트 획득 한도에 도달했습니다.`;
       }
     }
