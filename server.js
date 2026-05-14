@@ -44,7 +44,15 @@ const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) console.log("MONGO_URI가 설정되지 않았습니다.");
 
 mongoose.connect(MONGO_URI, { autoIndex: true })
-  .then(() => console.log("MongoDB 연결 성공"))
+  .then(async () => {
+    console.log("MongoDB 연결 성공");
+
+    await loadPlayers();
+
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`RUN : ${PORT}`);
+    });
+  })
   .catch(err => console.log(err));
 
 const playerSchema = new mongoose.Schema({
