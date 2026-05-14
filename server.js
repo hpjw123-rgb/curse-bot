@@ -156,7 +156,7 @@ function updateShopIfNeeded() {
 }
 
 // ==========================================
-// ENHANCE & SPECIAL SYSTEMS (UPDATED: 16-STAGE & INCREASED CHANCE)
+// ENHANCE & SPECIAL SYSTEMS (16-STAGE & BOOSTED)
 // ==========================================
 const ENHANCE_MAX = 16;
 const enhanceRates = {
@@ -679,9 +679,9 @@ function battle(a, b) {
   }
   if (b.technique === "BOM-BA-YE" && Bp < Ap) {
     const diff = Ap - Bp;
-    if (diff >= 200) Bp = Math.floor(Bp * 2);
-    else if (diff >= 100) Bp = Math.floor(Bp * 1.6);
-    else if (diff >= 50) Bp = Math.floor(Bp * 1.3);
+    if (diff >= 200) Ap = Math.floor(Ap * 2);
+    else if (diff >= 100) Ap = Math.floor(Ap * 1.6);
+    else if (diff >= 50) Ap = Math.floor(Ap * 1.3);
     B.log += " BOM-BA-YE";
   }
 
