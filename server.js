@@ -478,7 +478,7 @@ function statusPower(p) {
 // ==========================================
 const SPECIAL_CURSES = ["오리모토 리카", "죠고", "쿠로우루시", "마히토", "다곤", "하나미"];
 const SPECIAL_BASE = 500;
-const SPECIAL_PER = 320;
+const SPECIAL_PER = 220;
 const SPECIAL_MAX = 4000;
 
 let raid = { hour: null, boss: null, participants: {}, claimed: {} };
