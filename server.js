@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL 7.5 (UNRESTRICTED CURSE REWARDS)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (7.5 + 5.6 Enhanced)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -30,12 +30,13 @@ const BASE_URL = "https://curse-bot-4igy.onrender.com";
 const DEATH_IMAGE = "/images/death.png";
 const FIGHT_IMAGES = [
   "/images/fight scene1.jpg",
-  "/images/fight scene 2.jpg",
-  "/images/fight scene 3.jpg"
+  "/images/fight scene2.jpg",
+  "/images/fight scene3.jpg"
 ];
 
 function randomFightImage() {
-  return FIGHT_IMAGES[Math.floor(Math.random() * FIGHT_IMAGES.length)];
+  const path = FIGHT_IMAGES[Math.floor(Math.random() * FIGHT_IMAGES.length)];
+  return encodeURI(path);
 }
 
 // ==========================================
@@ -114,7 +115,7 @@ const aiNarrations = {
     "🌊 거대한 파도처럼 밀려오는 주력의 파동. 전장의 중력이 변하기 시작한다."
   ],
   clash: [
-    "💥 격돌! 주력이 충돌하며 발생하는 충격파가 지면을 송두리째 뒤흔든다!",
+    "💥 격돌! 주력이 충돌하며 발생하는 충격파가 지면을 송두리째 흔든다!",
     "✨ 눈을 멀게 하는 빛! 술식과 술식이 맞물리며 초현실적인 풍경이 펼쳐진다!",
     "💢 콰아앙! 단순한 타격이 아니다. 공간 자체가 짓눌리는 소리가 들려온다!",
     "🌀 소용돌이치는 에너지! 서로의 술식을 상쇄하려는 처절한 몸부림이 이어진다!"
@@ -154,10 +155,6 @@ function kstHourString() {
   return k.toISOString().slice(0, 13);
 }
 
-function raidHour() {
-  return kstHourString();
-}
-
 function kstMinute() {
   return kstNow().getUTCMinutes();
 }
@@ -172,11 +169,6 @@ function kst6hWindow() {
   return `${y}-${m}-${d}T${hh}`;
 }
 
-/**
- * [수정됨] 최근 6시간 동안 획득한 포인트 합산
- * h.unrestricted가 true인 경우(주령전투 등)는 합산에서 제외하여 
- * 플레이어 간 전투(/전투)의 제한 수치에 영향을 주지 않음.
- */
 function getRecentEarnedPoints(p) {
   const history = p.earnedPointsHistory || [];
   const sixHoursAgo = kstNow().getTime() - (6 * 60 * 60 * 1000);
@@ -185,7 +177,6 @@ function getRecentEarnedPoints(p) {
     .reduce((sum, h) => sum + h.amount, 0);
 }
 
-// [일반 전투용] 포인트 제한 적용
 function tryAddBattlePoints(p, amount) {
   const currentEarned = getRecentEarnedPoints(p);
   if (currentEarned + amount > MAX_POINTS_PER_6H) {
@@ -197,7 +188,6 @@ function tryAddBattlePoints(p, amount) {
   return { success: true };
 }
 
-// [주령전투용] 포인트 제한 무시 (단, 이력에는 남김)
 function addUnrestrictedPoints(p, amount) {
   p.point += amount;
   if (!p.earnedPointsHistory) p.earnedPointsHistory = [];
@@ -213,7 +203,7 @@ function top3Names() {
 }
 
 // ==========================================
-// DATA SETS (UPDATED)
+// DATA SETS
 // ==========================================
 const energyGrades = [
   { name: "특급", chance: 6, bonus: 35, powerIdx: 4 },
@@ -291,11 +281,11 @@ const enhanceRates = {
 };
 
 // ==========================================
-// CORE SYSTEMS (REFACTORED)
+// CORE SYSTEMS
 // ==========================================
 
 function enhanceTier(enhance) {
-  if (enhance >= 14) return 3;
+  if (enhance >= 11) return 3;
   if (enhance >= 8) return 2;
   if (enhance >= 4) return 1;
   return 0;
@@ -305,7 +295,8 @@ function techniqueImageUrl(p) {
   const arr = techImages[p.technique] || [];
   const idx = enhanceTier(p.enhance);
   const path = arr[idx] || "";
-  return path ? BASE_URL + path : "";
+  if (!path) return "";
+  return BASE_URL + encodeURI(path);
 }
 
 function generateDomainName(p) {
@@ -329,8 +320,6 @@ function blackFlashText() {
   return `⚫⚡⚫ 흑섬 발동 ⚫⚡⚫\n주력이 왜곡되며 0.000001초의 틈을 찢는다.\n충격이 현실을 관통한다.`;
 }
 
-function raw(p) { return p.basePower + p.energyBonus; }
-
 function fishFactor(gradeName) {
   const grade = energyGrades.find(g => g.name === gradeName);
   const exponent = grade ? grade.powerIdx : 1;
@@ -344,6 +333,7 @@ function heavenlyBase(grade) {
   return 1;
 }
 
+// [통합 핵심] 모든 로직을 포함하는 파워 계산기
 function calculatePower(p, e, opts = {}) {
   let power = 0;
   let log = "";
@@ -355,6 +345,7 @@ function calculatePower(p, e, opts = {}) {
   log += getNarration('intro');
   if (opts.extraLog) log += " " + opts.extraLog;
 
+  // 1. 기초 파워 설정
   if (p.techniqueType === "fish") {
     power = p.basePower * fishFactor(p.energyGrade);
     log += " 어주자(지수성장)";
@@ -366,10 +357,12 @@ function calculatePower(p, e, opts = {}) {
 
   power += p.absorbedPower;
 
+  // 2. 주구 기본 파워 추가 (상태창 일치용)
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     power += CURSED_TOOLS_DATA[p.equippedTool].power;
   }
 
+  // 3. 특수 술식 로직 (5.6 버전 디테일 통합)
   if (!ignoreSpecial) {
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
@@ -387,6 +380,7 @@ function calculatePower(p, e, opts = {}) {
     if (p.technique === "적혈조술") { power += p.bloodStack * 1; log += ` 혈식+${p.bloodStack}`; }
     if (p.techniqueType === "energy_counter") { power += e.energyBonus * 2; log += " 추령주법"; }
 
+    // 강화 배수 적용
     power *= Math.pow(1.2, p.enhance);
 
     if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
@@ -404,6 +398,7 @@ function calculatePower(p, e, opts = {}) {
       else if (pr > er) { power *= 2; log += " 투사주법"; }
     }
 
+    // 영역전개 로직
     if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")) {
       if (p.enhance >= 6 && !p.domainBlocked) {
         let domainChance = 0.6; 
@@ -441,6 +436,7 @@ function calculatePower(p, e, opts = {}) {
     }
   }
 
+  // 4. 주구 특수 효과 (전투력 수치 보정)
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     const tool = CURSED_TOOLS_DATA[p.equippedTool];
     if (tool.effect === "폭주") {
@@ -457,6 +453,7 @@ function calculatePower(p, e, opts = {}) {
   return { power: Math.floor(power), log, domainText, blackText };
 }
 
+// [중요] 전투 시 주구의 '억제/봉인' 효과를 별도 적용하는 함수
 function calculatePowerWithToolEffects(p, e, opts = {}) {
   let result = calculatePower(p, e, opts);
   if (p.equippedTool === "「천역모」") { result.power -= 30; result.log += " [천역모 억제]"; }
@@ -464,6 +461,7 @@ function calculatePowerWithToolEffects(p, e, opts = {}) {
   return result;
 }
 
+// [중요] 상태창 전투력 계산 함수 (calculatePower와 100% 일치)
 function statusPower(p) {
   const res = calculatePower(p, p, { ignoreSpecial: true });
   return Math.floor(res.power);
@@ -491,6 +489,7 @@ function battle(a, b) {
   let Ap = A.power;
   let Bp = B.power;
 
+  // 특수 기술 보정 (성간비행, 무위전변, BOM-BA-YE 등)
   if (a.technique === "성간비행") {
     const rate = (Ap < Bp) ? 0.35 : 0.20;
     Bp = Math.floor(Bp * (1 - rate));
@@ -561,7 +560,7 @@ const SPECIAL_MAX = 4000;
 let raid = { hour: null, boss: null, participants: {}, claimed: {} };
 
 function resetRaidIfNeeded() {
-  const h = raidHour(); 
+  const h = kstHourString(); 
   if (raid.hour !== h) {
     raid.hour = h;
     raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)];
@@ -643,24 +642,19 @@ function statusText(p) {
   const toolStatus = p.equippedTool ? `\n[장착 주구: ${p.equippedTool}]` : "";
   const recentEarned = getRecentEarnedPoints(p);
   const pointInfo = recentEarned >= MAX_POINTS_PER_6H 
-    ? `\n[포인트 획득: 🛑 제한됨 (${MAX_POINTS_PER_6H - recentEarned < 0 ? 0 : MAX_POINTS_PER_6H - recentEarned}P 남음)]`
+    ? `\n[포인트 획득: 🛑 제한됨 (${Math.max(0, MAX_POINTS_PER_6H - recentEarned)}P 남음)]`
     : `\n[포인트 획득: ✅ 가능 (${MAX_POINTS_PER_6H - recentEarned}P 남음)]`;
-  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]${toolStatus}`;
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
 }
 
-// ==========================================
-// DYNAMIC SHOP SYSTEM
-// ==========================================
 function getDynamicShopItems() {
   const now = kstNow();
   const hourSeed = now.getUTCHours(); 
   const availableItems = [...SHOP_ITEMS];
-  
   for (let i = availableItems.length - 1; i > 0; i--) {
     const j = (hourSeed + i) % (i + 1); 
     [availableItems[i], availableItems[j]] = [availableItems[j], availableItems[i]];
   }
-
   return availableItems.slice(0, 3);
 }
 
@@ -719,7 +713,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), techniqueImageUrl(p)));
   }
 
-  // 4. 상점/구매 (DYNAMIC VERSION)
+  // 4. 상점/구매
   if (msg === "/상점") {
     const currentShop = getDynamicShopItems();
     let shopMsg = `🛒 [${kstHourString().slice(0, 13)}시 한정 상점]\n━━━━━━━━━━━━\n`;
@@ -734,12 +728,10 @@ app.post("/chat", async (req, res) => {
     const idx = parseInt(msg.replace("/구매", "").trim()) - 1;
     const currentShop = getDynamicShopItems();
     const item = currentShop[idx];
-
-    if (!item) return res.json(replyText("잘못된 번호입니다. (현재 상점 아이템이 아닙니다.)"));
+    if (!item) return res.json(replyText("잘못된 번호입니다."));
     if (p.point < item.price) return res.json(replyText("포인트가 부족합니다."));
     
     p.point -= item.price;
-
     if (item.id === "sukuna_finger") {
       const currentIdx = energyGrades.findIndex(g => g.name === p.energyGrade);
       if (currentIdx > 0 && Math.random() < 0.5) {
@@ -761,7 +753,6 @@ app.post("/chat", async (req, res) => {
       await savePlayer(p); players[id] = p; 
       return res.json(replyText(`🗡️ 주구 [${item.name}]을(를) 구매했습니다!`));
     }
-    
     await savePlayer(p); players[id] = p;
     return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
   }
@@ -791,7 +782,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
   }
 
-  // 6. 주령전투 (UNRESTRICTED REWARDS)
+  // 6. 주령전투
   if (msg === "/주령전투") {
     const hour = kstHourString();
     if (p.lastCurseHour !== hour) { 
@@ -818,7 +809,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(resultMsg));
   }
 
-  // 7. 특급 주령 (Raid - UNRESTRICTED REWARDS)
+  // 7. 특급 주령
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
@@ -851,7 +842,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(msgText));
   }
 
-  // 8. 전투 (Battle - RESTRICTED)
+  // 8. 전투
   if (msg.startsWith("/전투")) {
     const w = kst6hWindow();
     if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
@@ -875,14 +866,13 @@ app.post("/chat", async (req, res) => {
       let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n마허라 소환!`;
       if (p.techniqueType !== "immortal") { await deletePlayer(id); msgText += `\n${p.nickname}님이 사망했습니다.`; if (top3.includes(p.nickname)) deathTriggered = true; } else { await savePlayer(p); }
       if (e.techniqueType !== "immortal") { await deletePlayer(e.userId); msgText += `\n상대 ${e.nickname} 사망`; if (top3.includes(e.nickname)) deathTriggered = true; } else { await savePlayer(e); }
-      return res.json(replyCard("전투 결과", msgText, deathTriggered ? (BASE_URL + DEATH_IMAGE) : randomFightImage()));
+      return res.json(replyCard("전투 결과", msgText, deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage())));
     }
 
     if (r.winner) {
       const res = tryAddBattlePoints(r.winner, 5);
       if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
       else {
-        // [수정됨] 한도 초과 시 포인트를 깎는 로직 제거 (이미 tryAddBattlePoints에서 안 더해짐)
         pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
       }
     }
@@ -898,9 +888,9 @@ app.post("/chat", async (req, res) => {
       await savePlayer(e); players[e.userId] = e;
     }
 
-    const img = deathTriggered ? (BASE_URL + DEATH_IMAGE) : randomFightImage();
+    const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
     return res.json(replyCard("전투 결과", resultText, img));
   }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 /장막해제 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리"));
+  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리"));
 });
