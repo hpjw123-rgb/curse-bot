@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.7 - Colony Safety & Point Cost Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.2 - Curse Absorb Fix & Raid Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -24,8 +24,8 @@ const BYPASS_RESET_MS = 6 * 60 * 60 * 1000;
 
 // Colony Constants
 const COLONY_NAMES = ["도쿄 제1 콜로니", "도쿄 제2 콜로니", "센다이 콜로니", "사쿠라지마 콜로니"];
-const COLONY_REWARD = 2;
-const COLONY_BATTLE_COST = 1; // [NEW] 콜로니 전투 참가 비용
+const COLONY_REWARD = 5; 
+const COLONY_BATTLE_COST = 1; 
 
 // ==========================================
 // STATIC IMAGE & BASE URL
@@ -58,7 +58,7 @@ const playerSchema = new mongoose.Schema({
   energyGrade: String,
   energyBonus: Number,
   enhance: Number,
-  absorbedPower: Number,
+  absorbedPower: { type: Number, default: 0 }, 
   bloodStack: Number,
   domainBlocked: Boolean,
   domainName: String,
@@ -118,7 +118,7 @@ mongoose.connect(MONGO_URI, { autoIndex: true })
 // ==========================================
 const aiNarrations = {
   intro: ["⚡ 주력이 대기를 찢으며 소용돌이친다.", "🔥 공기가 타오르는 듯한 압박감.", "🌑 침묵이 흐른다."],
-  clash: ["💥 격돌! 주력이 충돌하며 충격파가 발생한다!", "✨ 눈을 멀게 하는 빛!"],
+  clash: ["💥 격격돌! 주력이 충돌하며 충격파가 발생한다!", "✨ 눈을 멀게 하는 빛!"],
   domain: ["🌌 영역전개(領域展開)... 세계의 법칙이 재정의된다!"],
   blackflash: ["⚫⚡⚫ [흑섬]!! 0.000001초의 틈을 찢는다!"],
   victory: ["👑 승자는 모든 것을 삼켰다.", "🩸 전장은 침묵에 잠겼다."],
@@ -494,9 +494,8 @@ function battle(a, b, isColonyBattle = false) {
   const Af = { ...A, power: Math.floor(Ap) };
   const Bf = { ...B, power: Math.floor(Bp) };
 
-  // [Colony Mode] 전투력 미공개 처리
   if (isColonyBattle) {
-    Af.power = 0; // UI 상 노출 방지용
+    Af.power = 0; 
     Bf.power = 0;
   }
 
@@ -522,6 +521,9 @@ function battle(a, b, isColonyBattle = false) {
   let winner = Af.power >= Bf.power ? a : b;
   let loser = winner === a ? b : a;
 
+  // [FIX] 주령조술 에너지 흡수 로직 (플레이어 간 전투에서는 제거됨)
+  // 이 함수는 오직 주령전투 등에서 활용하기 위해 유지하며, 플레이어간 전투(/전투) 호출 시에는 사용되지 않음.
+  // (참고: battle 함수 내부에서 isColonyBattle 여부와 상관없이 계산되나, /전투 로직에서 win.isAbsorbing 플래그 처리를 하지 않음)
   if (winner.techniqueType === "curse_absorb") {
     const absorbAmount = Math.floor((loser.basePower + loser.energyBonus) / 5);
     winner.absorbedPower = (winner.absorbedPower || 0) + absorbAmount;
@@ -805,6 +807,7 @@ app.post("/chat", async (req, res) => {
 
     if (sp >= cp) {
       addUnrestrictedPoints(p, 1);
+      // [FIX] 주령조술 에너지를 흡수하는 로직 보강 및 안정화
       if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
         const absorbAmount = Math.floor(cp / 5);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
@@ -819,7 +822,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(resultMsg));
   }
 
-  // 7. 특급 주령
+  // 7. 특급 주령 (Raid)
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
@@ -832,7 +835,9 @@ app.post("/chat", async (req, res) => {
     }
     if (!raid.participants[id]) return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
     if (raid.claimed[id]) return res.json(replyText("이미 보상을 수령했습니다."));
-    if (raid.hour !== raidHour()) return res.json(replyText("보상 기간이 종료되었습니다."));
+    
+    // [FIX] raidHour() 함수 호출 오류 수정
+    if (raid.hour !== kstHourString().slice(0, 13)) return res.json(replyText("보상 기간이 종료되었습니다."));
 
     const bossPower = raidPower();
     const { maxP, maxV } = strongestParticipant();
@@ -859,7 +864,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(msgText));
   }
 
-  // 8. 전투 (기존 사망 로직 유지)
+  // 8. 전투 (플레이어 vs 플레이어)
   if (msg.startsWith("/전투")) {
     const w = kst6hWindow();
     if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
@@ -928,13 +933,13 @@ app.post("/chat", async (req, res) => {
       const res = tryAddBattlePoints(r.winner, 5);
       if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
       else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
-      if (r.winner.isAbsorbing) pointGainMsg += `\n🌀 [주령조술] 상대의 에너지를 흡수하여 파워가 영구히 상승했습니다!`;
+      
+      // [REMOVED] 플레이어 간 전투 시 주령조술 흡수(전투력 상승) 로직이 여기에는 존재하지 않습니다.
     }
 
     let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
     if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
 
-    // [수정] 불사 패널티 및 사망 로직 (일반 전투용)
     if (r.loser.techniqueType !== "immortal") {
       await deletePlayer(r.loser.userId);
       if (r.loser.userId === id) { 
@@ -951,15 +956,16 @@ app.post("/chat", async (req, res) => {
       } else {
         resultText += `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
       }
-      await savePlayer(p); players[id] = p;
-      await savePlayer(e); players[e.userId] = e;
     }
+
+    await savePlayer(p); players[id] = p;
+    await savePlayer(e); players[e.userId] = e;
 
     const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
     return res.json(replyCard("전투 결과", resultText, img));
   }
 
-  // 9. [NEW] 콜로니 시스템 (사망 로직 제외 + 참가비 추가)
+  // 9. 콜로니 시스템
   if (msg === "/콜라니") {
     let msgText = `🚩 [콜로니 리스트]\n━━━━━━━━━━━━\n`;
     COLONY_NAMES.forEach((name, idx) => {
@@ -977,7 +983,10 @@ app.post("/chat", async (req, res) => {
 
     const targetColony = colonies[colonyName] || { name: colonyName, ownerId: null, ownerNickname: null };
 
-    // 1. 아무도 없을 때 점령
+    if (p.occupiedColony) {
+      return res.json(replyText(`🚫 이미 [${p.occupiedColony}]를(를) 점령 중입니다.\n한 명당 하나의 콜로니만 점령할 수 있습니다.`));
+    }
+
     if (!targetColony.ownerId) {
       p.occupiedColony = colonyName;
       targetColony.ownerId = id;
@@ -988,36 +997,29 @@ app.post("/chat", async (req, res) => {
       return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 ${COLONY_REWARD}P를 획득합니다.`));
     }
 
-    // 2. 이미 주인이 있을 때 (자신이 아닐 때) -> 콜로니 전투
     if (targetColony.ownerId !== id) {
       const owner = players[targetColony.ownerId];
       if (!owner) return res.json(replyText("점령자가 이미 탈퇴했습니다. 콜로니를 재점령하세요."));
 
-      // [NEW] 참가 비용 체크
       if (p.point < COLONY_BATTLE_COST) {
         return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
       }
 
-      // 비용 차감
       p.point -= COLONY_BATTLE_COST;
       await savePlayer(p); players[id] = p;
 
-      // 콜로니 전투 수행 (전투력 미공개, 전용 나레이션)
       const r = battle(p, owner, true);
       let msgText = `🚩 [콜로니 쟁탈전]\n${p.nickname} vs ${owner.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('colony_clash')}\n`;
 
       if (r.winner) {
-        // 승자: 콜로니 점령
         const winner = r.winner;
         const loser = r.loser;
 
-        // 기존 점령자 정리
         if (owner.occupiedColony === colonyName) {
           owner.occupiedColony = null;
           await savePlayer(owner);
         }
 
-        // 새로운 점령자 설정
         winner.occupiedColony = colonyName;
         targetColony.ownerId = winner.userId;
         targetColony.ownerNickname = winner.nickname;
@@ -1027,11 +1029,8 @@ app.post("/chat", async (req, res) => {
         colonies[colonyName] = targetColony;
 
         msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n`;
-        
-        // [수정] 패배자 처리: 콜로니 전투에서는 계정 삭제를 하지 않음
         msgText += `━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
       } else {
-        // 무승부 (보통 발생하지 않음)
         msgText += `━━━━━━━━━━━━━━━━━━━━\n⚖️ 전투가 무승부로 끝났습니다. 점령자는 유지됩니다.`;
       }
       return res.json(replyText(msgText));
@@ -1042,8 +1041,3 @@ app.post("/chat", async (req, res) => {
 
   return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리 /콜라니"));
 });
-
-// 헬퍼 함수 (Raid 시간 체크용)
-function raidHour() {
-  return raid.hour;
-}
