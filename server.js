@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.5 - Actual Curtain Destruction Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.7 - Colony Safety & Point Cost Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -19,8 +19,13 @@ const HOURLY_CURSE_BATTLES = 5;
 const MAX_NAME_LEN = 10;
 const MAX_POINTS_PER_6H = 20; 
 const ENHANCE_MAX = 16;       
-const MAX_BYPASS_COUNT = 2; // 6시간당 최대 돌파 횟수
-const BYPASS_RESET_MS = 6 * 60 * 60 * 1000; // 6시간 (밀리초)
+const MAX_BYPASS_COUNT = 2; 
+const BYPASS_RESET_MS = 6 * 60 * 60 * 1000;
+
+// Colony Constants
+const COLONY_NAMES = ["도쿄 제1 콜로니", "도쿄 제2 콜로니", "센다이 콜로니", "사쿠라지마 콜로니"];
+const COLONY_REWARD = 2;
+const COLONY_BATTLE_COST = 1; // [NEW] 콜로니 전투 참가 비용
 
 // ==========================================
 // STATIC IMAGE & BASE URL
@@ -30,11 +35,7 @@ const BASE_URL = "https://curse-bot-4igy.onrender.com";
 
 const DEATH_IMAGE = "/images/death.png";
 const MAH_IMAGE = "/images/Mahoraga.jpg";
-const FIGHT_IMAGES = [
-  "/images/fight scene1.jpg",
-  "/images/fight scene2.jpg",
-  "/images/fight scene3.jpg"
-];
+const FIGHT_IMAGES = ["/images/fight scene1.jpg", "/images/fight scene2.jpg", "/images/fight scene3.jpg"];
 
 function randomFightImage() {
   const path = FIGHT_IMAGES[Math.floor(Math.random() * FIGHT_IMAGES.length)];
@@ -45,7 +46,6 @@ function randomFightImage() {
 // MONGODB & PLAYER SCHEMA
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
-if (!MONGO_URI) console.log("MONGO_URI가 설정되지 않았습니다.");
 
 const playerSchema = new mongoose.Schema({
   userId: { type: String, unique: true, index: true },
@@ -71,39 +71,45 @@ const playerSchema = new mongoose.Schema({
   equippedTool: String,
   earnedPointsHistory: { type: Array, default: [] },
   curtainBypassCount: { type: Number, default: 0 },
-  lastBypassTime: { type: Number, default: 0 }
+  lastBypassTime: { type: Number, default: 0 },
+  occupiedColony: { type: String, default: null }
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
 
-let players = {};
+const colonySchema = new mongoose.Schema({
+  name: { type: String, unique: true },
+  ownerId: { type: String, default: null },
+  ownerNickname: { type: String, default: null }
+}, { collection: "colonies" });
 
-async function loadPlayers() {
+const Colony = mongoose.model("Colony", colonySchema);
+
+let players = {};
+let colonies = {};
+
+async function loadData() {
   try {
-    const data = await Player.find().lean();
-    data.forEach(p => { players[p.userId] = p; });
-    console.log("플레이어 데이터 로드 완료");
+    const pData = await Player.find().lean();
+    pData.forEach(p => { players[p.userId] = p; });
+    
+    const cData = await Colony.find().lean();
+    cData.forEach(c => { colonies[c.name] = c; });
+    
+    console.log("데이터 로드 완료 (플레이어/콜로니)");
   } catch (err) {
     console.error("데이터 로드 오류:", err);
   }
 }
 
-async function savePlayer(p) {
-  await Player.updateOne({ userId: p.userId }, p, { upsert: true });
-}
-
-async function deletePlayer(userId) {
-  await Player.deleteOne({ userId });
-  delete players[userId];
-}
+async function savePlayer(p) { await Player.updateOne({ userId: p.userId }, p, { upsert: true }); }
+async function saveColony(c) { await Colony.updateOne({ name: c.name }, c, { upsert: true }); }
+async function deletePlayer(userId) { await Player.deleteOne({ userId }); delete players[userId]; }
 
 mongoose.connect(MONGO_URI, { autoIndex: true })
   .then(async () => {
-    console.log("MongoDB 연결 성공");
-    await loadPlayers();
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`SERVER RUNNING ON PORT : ${PORT}`);
-    });
+    await loadData();
+    app.listen(PORT, "0.0.0.0", () => console.log(`SERVER RUNNING ON PORT : ${PORT}`));
   })
   .catch(err => console.log("MongoDB 연결 실패:", err));
 
@@ -111,33 +117,15 @@ mongoose.connect(MONGO_URI, { autoIndex: true })
 // AI NARRATION SYSTEM
 // ==========================================
 const aiNarrations = {
-  intro: [
-    "⚡ 주력이 대기를 찢으며 소용돌이친다. 두 술사의 살기가 맞부딪히며 공간이 비명을 지른다.",
-    "🔥 공기가 타오르는 듯한 압박감. 단 한 번의 움직임이 생사를 가를 전조다.",
-    "🌑 침묵이 흐른다. 그러나 그 정적은 폭풍 전야의 거대한 에너지다.",
-    "🌪️ 주력의 흐름이 뒤틀린다. 두 존재의 충돌이 눈앞의 현실을 왜곡시키기 시작한다.",
-    "🌊 거대한 파도처럼 밀려오는 주력의 파동. 전장의 중력이 변하기 시작한다."
-  ],
-  clash: [
-    "💥 격돌! 주력이 충돌하며 발생하는 충격파가 지면을 송두리째 흔든다!",
-    "✨ 눈을 멀게 하는 빛! 술식과 술식이 맞물리며 초현실적인 풍경이 펼쳐진다!",
-    "💢 콰아앙! 단순한 타격이 아니다. 공간 자체가 짓눌리는 소리가 들려온다!",
-    "🌀 소용돌이치는 에너지! 서로를 상쇄하려는 처절한 몸부림이 이어진다!"
-  ],
-  domain: [
-    "🌌 영역전개(領域展開)... 세계의 법칙이 재정의된다!",
-    "🌌 공간이 붕괴되며, 오직 한 명만을 위한 절대적인 세계가 강림한다!",
-    "🌌 찰나의 순간, 현실의 경계가 무너지고 새로운 차원이 펼쳐진다!"
-  ],
-  blackflash: [
-    "⚫⚡⚫ [흑섬]!! 0.000001초의 틈을 찢고, 검은 번개가 현실을 관통한다!",
-    "⚫⚡⚡⚫ 콰르릉! 주력의 극의에 도달한 찰나의 타격이 전장을 뒤덮는다!",
-    "⚫⚡⚫ 흑섬 발생! 검은 번개와 함께 주력의 폭발이 대기를 진동시킨다!"
-  ],
-  victory: [
-    "👑 승자는 모든 것을 삼켰다. 패배자의 흔적조차 남지 않은 정적만이 흐른다.",
-    "🩸 전장은 침묵에 잠겼다. 오직 승자의 압도적인 존재감만이 공기를 지배한다.",
-    "✨ 결과는 확정되었다. 무너진 현실 속에서 승리의 선언이 울려 퍼진다."
+  intro: ["⚡ 주력이 대기를 찢으며 소용돌이친다.", "🔥 공기가 타오르는 듯한 압박감.", "🌑 침묵이 흐른다."],
+  clash: ["💥 격돌! 주력이 충돌하며 충격파가 발생한다!", "✨ 눈을 멀게 하는 빛!"],
+  domain: ["🌌 영역전개(領域展開)... 세계의 법칙이 재정의된다!"],
+  blackflash: ["⚫⚡⚫ [흑섬]!! 0.000001초의 틈을 찢는다!"],
+  victory: ["👑 승자는 모든 것을 삼켰다.", "🩸 전장은 침묵에 잠겼다."],
+  colony_clash: [
+    "🚩 [콜로니 쟁탈전] 두 술사가 영토를 두고 격돌합니다!",
+    "⚔️ 영역의 경계에서 콜로니를 차지하기 위한 처절한 전투가 시작됩니다!",
+    "💥 땅의 주인이 바뀌려 하고 있습니다!"
   ]
 };
 
@@ -149,20 +137,9 @@ function getNarration(type) {
 // ==========================================
 // UTILITY & HELPER FUNCTIONS
 // ==========================================
-function kstNow() {
-  const now = new Date();
-  return new Date(now.getTime() + 9 * 60 * 60 * 1000);
-}
-
-function kstHourString() {
-  const k = kstNow();
-  return k.toISOString().slice(0, 13);
-}
-
-function kstMinute() {
-  return kstNow().getUTCMinutes();
-}
-
+function kstNow() { return new Date(new Date().getTime() + 9 * 60 * 60 * 1000); }
+function kstHourString() { const k = kstNow(); return k.toISOString().slice(0, 13); }
+function kstMinute() { return kstNow().getUTCMinutes(); }
 function kst6hWindow() {
   const k = kstNow();
   const y = k.getUTCFullYear();
@@ -176,16 +153,12 @@ function kst6hWindow() {
 function getRecentEarnedPoints(p) {
   const history = p.earnedPointsHistory || [];
   const sixHoursAgo = kstNow().getTime() - (6 * 60 * 60 * 1000);
-  return history
-    .filter(h => h.timestamp > sixHoursAgo && h.unrestricted !== true)
-    .reduce((sum, h) => sum + h.amount, 0);
+  return history.filter(h => h.timestamp > sixHoursAgo && h.unrestricted !== true).reduce((sum, h) => sum + h.amount, 0);
 }
 
 function tryAddBattlePoints(p, amount) {
   const currentEarned = getRecentEarnedPoints(p);
-  if (currentEarned + amount > MAX_POINTS_PER_6H) {
-    return { success: false, remaining: Math.max(0, MAX_POINTS_PER_6H - currentEarned) };
-  }
+  if (currentEarned + amount > MAX_POINTS_PER_6H) return { success: false };
   p.point += amount;
   if (!p.earnedPointsHistory) p.earnedPointsHistory = [];
   p.earnedPointsHistory.push({ amount: amount, timestamp: kstNow().getTime() });
@@ -200,10 +173,7 @@ function addUnrestrictedPoints(p, amount) {
 }
 
 function top3Names() {
-  return Object.values(players)
-    .sort((a, b) => b.point - a.point)
-    .slice(0, 3)
-    .map(p => p.nickname);
+  return Object.values(players).sort((a, b) => b.point - a.point).slice(0, 3).map(p => p.nickname);
 }
 
 // ==========================================
@@ -308,7 +278,6 @@ function generateDomainName(p) {
   const core = ["공간", "심연", "세계", "결계", "감옥", "현실", "차원", "무대"];
   const suffix = ["의 지배", "의 결계", "의 단절", "의 붕괴", "의 침식", "의 파편"];
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  
   let base = pick(prefix) + " " + pick(core) + pick(suffix);
   if (p.enhance >= 14) return "🌌 " + base + " [절대영역]";
   if (p.enhance >= 8) return "🌌 " + base + " [발현]";
@@ -466,7 +435,7 @@ function statusPower(p) {
 // ==========================================
 // BATTLE SYSTEM
 // ==========================================
-function battle(a, b) {
+function battle(a, b, isColonyBattle = false) {
   const aAnti = (a.technique === "초미지규" && Math.random() < 0.7);
   const bAnti = (b.technique === "초미지규" && Math.random() < 0.7);
 
@@ -524,6 +493,12 @@ function battle(a, b) {
 
   const Af = { ...A, power: Math.floor(Ap) };
   const Bf = { ...B, power: Math.floor(Bp) };
+
+  // [Colony Mode] 전투력 미공개 처리
+  if (isColonyBattle) {
+    Af.power = 0; // UI 상 노출 방지용
+    Bf.power = 0;
+  }
 
   let mahoragaEvent = false;
   if (a.techniqueType === "mahoraga" && Math.random() < 0.2 && Bf.power < 300) mahoragaEvent = true;
@@ -609,7 +584,8 @@ function quickReplies() {
     { label: "/랭킹", action: "message", messageText: "/랭킹" },
     { label: "/강화", action: "message", messageText: "/강화" },
     { label: "/상점", action: "message", messageText: "/상점" },
-    { label: "/인벤토리", action: "message", messageText: "/인벤토리" }
+    { label: "/인벤토리", action: "message", messageText: "/인벤토리" },
+    { label: "/콜라니", action: "message", messageText: "/콜라니" }
   ];
 }
 
@@ -657,8 +633,9 @@ function statusText(p) {
     : `\n[포인트 획득: ✅ 가능 (${MAX_POINTS_PER_6H - recentEarned}P 남음)]`;
   
   const curseDisplay = p.absorbedPower > 0 ? `\n[주령 소지: +${p.absorbedPower}]` : "";
+  const colonyDisplay = p.occupiedColony ? `\n[점령 콜로니: ${p.occupiedColony}]` : "";
 
-  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}${curseDisplay}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}${curseDisplay}${colonyDisplay}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
 }
 
 function getDynamicShopItems() {
@@ -697,7 +674,7 @@ app.post("/chat", async (req, res) => {
       domainName: generateDomainName({ enhance: 0 }), battleCount: 0, battleWindow: kst6hWindow(),
       curseBattles: 0, lastCurseHour: kstHourString(), curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
       inventory: [], equippedTool: null, earnedPointsHistory: [],
-      curtainBypassCount: 0, lastBypassTime: 0
+      curtainBypassCount: 0, lastBypassTime: 0, occupiedColony: null
     };
     players[id] = newPlayer;
     await savePlayer(newPlayer);
@@ -732,9 +709,7 @@ app.post("/chat", async (req, res) => {
   if (msg === "/상점") {
     const currentShop = getDynamicShopItems();
     let shopMsg = `🛒 [${kstHourString().slice(0, 13)}시 한정 상점]\n━━━━━━━━━━━━\n`;
-    currentShop.forEach((item, idx) => { 
-      shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`; 
-    });
+    currentShop.forEach((item, idx) => { shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`; });
     shopMsg += "━━━━━━━━━━━━\n구매: /구매 [번호]";
     return res.json(replyText(shopMsg));
   }
@@ -772,13 +747,13 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
   }
 
-  // 5. 인벤토리/장착/장막해제
+  // 5. 인벤토리 / 장착 / 해제 / 삭제
   if (msg === "/인벤토리") {
     let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n보관 중인 주구: ${p.inventory.length}/3\n`;
     if (p.inventory.length === 0) invMsg += "비어 있음\n";
     else {
       p.inventory.forEach((tool, idx) => { invMsg += `${idx + 1}. ${tool} ${p.equippedTool === tool ? "✅(장착중)" : ""}\n`; });
-      invMsg += "━━━━━━━━━━━━\n장착: /장착 [번호]";
+      invMsg += "━━━━━━━━━━━━\n장착: /장착 [번호]\n해제: /해제 [번호]\n삭제: /삭제 [번호]";
     }
     return res.json(replyText(invMsg));
   }
@@ -791,6 +766,26 @@ app.post("/chat", async (req, res) => {
     }
     return res.json(replyText("해당 번호의 주구가 없습니다."));
   }
+  if (msg.startsWith("/해제")) {
+    const idx = parseInt(msg.replace("/해제", "").trim()) - 1;
+    if (p.equippedTool === p.inventory[idx]) {
+      p.equippedTool = null;
+      await savePlayer(p); players[id] = p;
+      return res.json(replyText(`✨ ${p.inventory[idx]}을(를) 해제했습니다.`));
+    }
+    return res.json(replyText("장착 중인 주구가 아닙니다."));
+  }
+  if (msg.startsWith("/삭제")) {
+    const idx = parseInt(msg.replace("/삭제", "").trim()) - 1;
+    if (p.inventory[idx]) {
+      const tool = p.inventory[idx];
+      p.inventory.splice(idx, 1);
+      if (p.equippedTool === tool) p.equippedTool = null;
+      await savePlayer(p); players[id] = p;
+      return res.json(replyText(`🗑️ [${tool}]을(를) 영구 삭제했습니다.`));
+    }
+    return res.json(replyText("해당 번호의 주구가 없습니다."));
+  }
   if (msg === "/장막해제") {
     if (p.curtainActiveUntil <= kstNow().getTime()) return res.json(replyText("🛡️ 현재 펼쳐진 장막이 없습니다."));
     p.curtainActiveUntil = 0; await savePlayer(p); players[id] = p;
@@ -800,12 +795,7 @@ app.post("/chat", async (req, res) => {
   // 6. 주령전투
   if (msg === "/주령전투") {
     const hour = kstHourString();
-    if (p.lastCurseHour !== hour) { 
-      p.lastCurseHour = hour; 
-      p.curseBattles = 0; 
-      await savePlayer(p);
-      players[id] = p;
-    }
+    if (p.lastCurseHour !== hour) { p.lastCurseHour = hour; p.curseBattles = 0; await savePlayer(p); players[id] = p; }
     if (p.curseBattles >= HOURLY_CURSE_BATTLES) return res.json(replyText(`🚫 이번 시간대(${hour.slice(11, 13)}시) 주령전투 횟수를 모두 사용했습니다.`));
     
     p.curseBattles += 1;
@@ -818,7 +808,7 @@ app.post("/chat", async (req, res) => {
       if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
         const absorbAmount = Math.floor(cp / 5);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
+        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
       }
       await savePlayer(p); players[id] = p;
       resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
@@ -859,7 +849,7 @@ app.post("/chat", async (req, res) => {
       if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
         const absorbAmount = Math.floor(bossPower / 20);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
+        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
       }
       await savePlayer(p); players[id] = p; 
       msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
@@ -869,7 +859,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(msgText));
   }
 
-  // 8. 전투
+  // 8. 전투 (기존 사망 로직 유지)
   if (msg.startsWith("/전투")) {
     const w = kst6hWindow();
     if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
@@ -880,7 +870,6 @@ app.post("/chat", async (req, res) => {
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
     if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
 
-    // [수정] 주구(천역모, 흑승) 장막 돌파 및 횟수 제한 로직
     const isBypassTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
     const nowMs = kstNow().getTime();
     let canBypass = false;
@@ -888,23 +877,14 @@ app.post("/chat", async (req, res) => {
 
     if (e.curtainActiveUntil > nowMs) {
       if (isBypassTool) {
-        // 6시간 주기 확인 및 초기화
-        if (nowMs - p.lastBypassTime > BYPASS_RESET_MS) {
-          p.curtainBypassCount = 0;
-          p.lastBypassTime = nowMs;
-        }
-
+        if (nowMs - p.lastBypassTime > BYPASS_RESET_MS) { p.curtainBypassCount = 0; p.lastBypassTime = nowMs; }
         if (p.curtainBypassCount < MAX_BYPASS_COUNT) {
           canBypass = true;
           p.curtainBypassCount += 1;
           p.lastBypassTime = nowMs;
           bypassMsg = `\n✨ [주구 발동] ${p.equippedTool}의 힘으로 장막을 강제 돌파합니다! (남은 횟수: ${MAX_BYPASS_COUNT - p.curtainBypassCount}회)`;
-          
-          // [수정 핵심] 돌파 성공 시 상대방의 장막을 실제로 해제
           e.curtainActiveUntil = 0;
-          await savePlayer(e);
-          players[e.userId] = e;
-          
+          await savePlayer(e); players[e.userId] = e;
           await savePlayer(p); players[id] = p;
         } else {
           return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!\n(주구 돌파 횟수 6시간 내 ${MAX_BYPASS_COUNT}회를 모두 소진했습니다.)`));
@@ -914,25 +894,21 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    // 장막 돌파 성공 시 공격자의 장막 해제 (자신의 장막도 유지하지 않도록)
     if (p.curtainActiveUntil > nowMs) { p.curtainActiveUntil = 0; await savePlayer(p); }
-    
     p.battleCount += 1;
 
     const top3 = top3Names();
     const r = battle(p, e);
     let deathTriggered = false;
     let pointGainMsg = "";
-
     let enemyDomainAlert = "";
+
     if (e.enhance >= 6 && e.domainName !== "❌ 미발현") {
       enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
     }
 
-    // [마허라 이벤트 처리 로직]
     if (r.mahoragaEvent) {
       let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
-      
       if (r.targetDead) {
           const deadUser = r.loser;
           msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
@@ -944,7 +920,6 @@ app.post("/chat", async (req, res) => {
           await savePlayer(p); players[id] = p;
           await savePlayer(e); players[e.userId] = e;
       }
-      
       const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
       return res.json(replyCard("마허라 강림", msgText, img));
     }
@@ -952,26 +927,30 @@ app.post("/chat", async (req, res) => {
     if (r.winner) {
       const res = tryAddBattlePoints(r.winner, 5);
       if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
-      else {
-        pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
-      }
-      
-      if (r.winner.isAbsorbing) {
-          pointGainMsg += `\n🌀 [주령조술] 상대의 에너지를 흡수하여 파워가 영구히 상승했습니다!`;
-      }
+      else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
+      if (r.winner.isAbsorbing) pointGainMsg += `\n🌀 [주령조술] 상대의 에너지를 흡수하여 파워가 영구히 상승했습니다!`;
     }
 
     let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
-    
-    if (enemyDomainAlert) {
-        resultText = enemyDomainAlert + "\n" + resultText;
-    }
+    if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
 
+    // [수정] 불사 패널티 및 사망 로직 (일반 전투용)
     if (r.loser.techniqueType !== "immortal") {
       await deletePlayer(r.loser.userId);
-      if (r.loser.userId === id) { resultText += `\n💀 ${p.nickname}님이 사망했습니다.`; if (top3.includes(p.nickname)) deathTriggered = true; }
-      else { resultText += `\n💀 ${r.loser.nickname}님이 사망했습니다.`; if (top3.includes(r.loser.nickname)) deathTriggered = true; }
+      if (r.loser.userId === id) { 
+        resultText += `\n💀 ${p.nickname}님이 사망했습니다.`; 
+        if (top3.includes(p.nickname)) deathTriggered = true; 
+      } else { 
+        resultText += `\n💀 ${r.loser.nickname}님이 사망했습니다.`; 
+        if (top3.includes(r.loser.nickname)) deathTriggered = true; 
+      }
     } else {
+      r.loser.point = 0;
+      if (r.loser.userId === id) {
+        resultText += `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
+      } else {
+        resultText += `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
+      }
       await savePlayer(p); players[id] = p;
       await savePlayer(e); players[e.userId] = e;
     }
@@ -980,7 +959,88 @@ app.post("/chat", async (req, res) => {
     return res.json(replyCard("전투 결과", resultText, img));
   }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리"));
+  // 9. [NEW] 콜로니 시스템 (사망 로직 제외 + 참가비 추가)
+  if (msg === "/콜라니") {
+    let msgText = `🚩 [콜로니 리스트]\n━━━━━━━━━━━━\n`;
+    COLONY_NAMES.forEach((name, idx) => {
+      const owner = colonies[name]?.ownerNickname ? `[점령: ${colonies[name].ownerNickname}]` : "[미점령]";
+      msgText += `${idx + 1}. ${name} ${owner}\n`;
+    });
+    msgText += "━━━━━━━━━━━━\n점령: /콜라니 [번호]";
+    return res.json(replyText(msgText));
+  }
+
+  if (msg.startsWith("/콜라니")) {
+    const idx = parseInt(msg.replace("/콜라니", "").trim()) - 1;
+    const colonyName = COLONY_NAMES[idx];
+    if (!colonyName) return res.json(replyText("잘못된 번호입니다."));
+
+    const targetColony = colonies[colonyName] || { name: colonyName, ownerId: null, ownerNickname: null };
+
+    // 1. 아무도 없을 때 점령
+    if (!targetColony.ownerId) {
+      p.occupiedColony = colonyName;
+      targetColony.ownerId = id;
+      targetColony.ownerNickname = p.nickname;
+      await savePlayer(p);
+      await saveColony(targetColony);
+      colonies[colonyName] = targetColony;
+      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 ${COLONY_REWARD}P를 획득합니다.`));
+    }
+
+    // 2. 이미 주인이 있을 때 (자신이 아닐 때) -> 콜로니 전투
+    if (targetColony.ownerId !== id) {
+      const owner = players[targetColony.ownerId];
+      if (!owner) return res.json(replyText("점령자가 이미 탈퇴했습니다. 콜로니를 재점령하세요."));
+
+      // [NEW] 참가 비용 체크
+      if (p.point < COLONY_BATTLE_COST) {
+        return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
+      }
+
+      // 비용 차감
+      p.point -= COLONY_BATTLE_COST;
+      await savePlayer(p); players[id] = p;
+
+      // 콜로니 전투 수행 (전투력 미공개, 전용 나레이션)
+      const r = battle(p, owner, true);
+      let msgText = `🚩 [콜로니 쟁탈전]\n${p.nickname} vs ${owner.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('colony_clash')}\n`;
+
+      if (r.winner) {
+        // 승자: 콜로니 점령
+        const winner = r.winner;
+        const loser = r.loser;
+
+        // 기존 점령자 정리
+        if (owner.occupiedColony === colonyName) {
+          owner.occupiedColony = null;
+          await savePlayer(owner);
+        }
+
+        // 새로운 점령자 설정
+        winner.occupiedColony = colonyName;
+        targetColony.ownerId = winner.userId;
+        targetColony.ownerNickname = winner.nickname;
+        
+        await savePlayer(winner);
+        await saveColony(targetColony);
+        colonies[colonyName] = targetColony;
+
+        msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n`;
+        
+        // [수정] 패배자 처리: 콜로니 전투에서는 계정 삭제를 하지 않음
+        msgText += `━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
+      } else {
+        // 무승부 (보통 발생하지 않음)
+        msgText += `━━━━━━━━━━━━━━━━━━━━\n⚖️ 전투가 무승부로 끝났습니다. 점령자는 유지됩니다.`;
+      }
+      return res.json(replyText(msgText));
+    } else {
+      return res.json(replyText("이미 본인이 점령 중인 콜로니입니다."));
+    }
+  }
+
+  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리 /콜라니"));
 });
 
 // 헬퍼 함수 (Raid 시간 체크용)
