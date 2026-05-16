@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL 7.3 (PIERCING TOOL VERSION)
+// 주술 배틀 RPG ULTIMATE FINAL 7.3 (FIXED VERSION)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -154,6 +154,10 @@ function kstHourString() {
   return k.toISOString().slice(0, 13);
 }
 
+function raidHour() {
+  return kstHourString();
+}
+
 function kstMinute() {
   return kstNow().getUTCMinutes();
 }
@@ -183,6 +187,13 @@ function tryAddBattlePoints(p, amount) {
   if (!p.earnedPointsHistory) p.earnedPointsHistory = [];
   p.earnedPointsHistory.push({ amount: amount, timestamp: kstNow().getTime() });
   return { success: true };
+}
+
+function top3Names() {
+  return Object.values(players)
+    .sort((a, b) => b.point - a.point)
+    .slice(0, 3)
+    .map(p => p.nickname);
 }
 
 // ==========================================
@@ -545,7 +556,7 @@ const SPECIAL_MAX = 4000;
 let raid = { hour: null, boss: null, participants: {}, claimed: {} };
 
 function resetRaidIfNeeded() {
-  const h = kstHourString();
+  const h = raidHour(); 
   if (raid.hour !== h) {
     raid.hour = h;
     raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)];
@@ -772,10 +783,10 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`👹 주령전투\n${p.nickname} vs 주령\n${sp} vs ${cp}\n패배...`));
   }
 
-  // 7. 특급 주령 (Raid - 참가자 명단 출력 포함)
+  // 7. 특급 주령 (Raid)
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
-    const minute = kstMinute(); const hour = raidHour();
+    const minute = kstMinute();
     if (minute < 30) {
       if (!raid.participants[id]) {
         raid.participants[id] = { userId: id, nickname: p.nickname, power: statusPower(p) };
@@ -785,7 +796,7 @@ app.post("/chat", async (req, res) => {
     }
     if (!raid.participants[id]) return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
     if (raid.claimed[id]) return res.json(replyText("이미 보상을 수령했습니다."));
-    if (raid.hour !== hour) return res.json(replyText("보상 기간이 종료되었습니다."));
+    if (raid.hour !== raidHour()) return res.json(replyText("보상 기간이 종료되었습니다."));
 
     const bossPower = raidPower();
     const { maxP, maxV } = strongestParticipant();
@@ -803,11 +814,8 @@ app.post("/chat", async (req, res) => {
     }
     return res.json(replyText(msgText));
   }
-  function resetRaidIfNeeded() {
-    const h = raidHour(); if (h !== raid.hour) { raid.hour = h; raid.boss = SPECIAL_CURSES[Math.floor(Math.random() * SPECIAL_CURSES.length)]; raid.participants = {}; raid.claimed = {}; }
-  }
 
-  // 8. 전투 (Battle - 장막 관통 로직 포함)
+  // 8. 전투 (Battle)
   if (msg.startsWith("/전투")) {
     const w = kst6hWindow();
     if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
@@ -817,15 +825,7 @@ app.post("/chat", async (req, res) => {
     const e = getPlayerByName(targetName);
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
     if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
-
-    // --- [장막 관통 로직 수정 시작] ---
-    const isPiercingTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
-    const isTargetProtected = e.curtainActiveUntil > kstNow().getTime();
-
-    if (isTargetProtected && !isPiercingTool) {
-      return res.json(replyText(`🛡️ ${e.nickname}님은 현재 장막을 펼치고 있어 전투를 할 수 없습니다!`));
-    }
-    // --- [장막 관통 로직 수정 끝] ---
+    if (e.curtainActiveUntil > kstNow().getTime()) return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!`));
 
     if (p.curtainActiveUntil > kstNow().getTime()) { p.curtainActiveUntil = 0; await savePlayer(p); }
     p.battleCount += 1;
