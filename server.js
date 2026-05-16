@@ -172,10 +172,17 @@ function kst6hWindow() {
   return `${y}-${m}-${d}T${hh}`;
 }
 
+/**
+ * [수정됨] 최근 6시간 동안 획득한 포인트 합산
+ * h.unrestricted가 true인 경우(주령전투 등)는 합산에서 제외하여 
+ * 플레이어 간 전투(/전투)의 제한 수치에 영향을 주지 않음.
+ */
 function getRecentEarnedPoints(p) {
   const history = p.earnedPointsHistory || [];
   const sixHoursAgo = kstNow().getTime() - (6 * 60 * 60 * 1000);
-  return history.filter(h => h.timestamp > sixHoursAgo).reduce((sum, h) => sum + h.amount, 0);
+  return history
+    .filter(h => h.timestamp > sixHoursAgo && h.unrestricted !== true)
+    .reduce((sum, h) => sum + h.amount, 0);
 }
 
 // [일반 전투용] 포인트 제한 적용
@@ -781,7 +788,7 @@ app.post("/chat", async (req, res) => {
   if (msg === "/장막해제") {
     if (p.curtainActiveUntil <= kstNow().getTime()) return res.json(replyText("🛡️ 현재 펼쳐진 장막이 없습니다."));
     p.curtainActiveUntil = 0; await savePlayer(p); players[id] = p;
-    return res.json(replyText("✨ 장막을 거두었습니다. 이제 전투가 가능합니다."));
+    return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
   }
 
   // 6. 주령전투 (UNRESTRICTED REWARDS)
@@ -875,7 +882,7 @@ app.post("/chat", async (req, res) => {
       const res = tryAddBattlePoints(r.winner, 5);
       if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
       else {
-        r.winner.point -= 5; 
+        // [수정됨] 한도 초과 시 포인트를 깎는 로직 제거 (이미 tryAddBattlePoints에서 안 더해짐)
         pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
       }
     }
