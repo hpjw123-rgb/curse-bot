@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.3 - Curse Manipulation Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.4 - Curtain Bypass Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -19,6 +19,8 @@ const HOURLY_CURSE_BATTLES = 5;
 const MAX_NAME_LEN = 10;
 const MAX_POINTS_PER_6H = 20; 
 const ENHANCE_MAX = 16;       
+const MAX_BYPASS_COUNT = 2; // 6시간당 최대 돌파 횟수
+const BYPASS_RESET_MS = 6 * 60 * 60 * 1000; // 6시간 (밀리초)
 
 // ==========================================
 // STATIC IMAGE & BASE URL
@@ -56,7 +58,7 @@ const playerSchema = new mongoose.Schema({
   energyGrade: String,
   energyBonus: Number,
   enhance: Number,
-  absorbedPower: Number, // 주령조술로 흡수한 누적 전투력
+  absorbedPower: Number,
   bloodStack: Number,
   domainBlocked: Boolean,
   domainName: String,
@@ -67,7 +69,10 @@ const playerSchema = new mongoose.Schema({
   curtainActiveUntil: Number,
   inventory: [String],
   equippedTool: String,
-  earnedPointsHistory: { type: Array, default: [] }
+  earnedPointsHistory: { type: Array, default: [] },
+  // [추가] 장막 돌파 제한 관련 필드
+  curtainBypassCount: { type: Number, default: 0 },
+  lastBypassTime: { type: Number, default: 0 }
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
@@ -353,7 +358,6 @@ function calculatePower(p, e, opts = {}) {
     power = p.basePower + p.energyBonus;
   }
 
-  // [핵심] 주령조술 흡수량은 강화 배율이 적용되지 않도록 합산 위치 고정
   power += p.absorbedPower;
 
   if (p.technique === "무하한 술식" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
@@ -378,7 +382,6 @@ function calculatePower(p, e, opts = {}) {
     if (p.technique === "적혈조술") { power += p.bloodStack * 1; log += ` 혈식+${p.bloodStack}`; }
     if (p.techniqueType === "energy_counter") { power += e.energyBonus * 2; log += " 추령주법"; }
 
-    // [강화 배율 적용] absorbedPower가 포함된 전체 power에 배율을 곱함
     power *= Math.pow(1.2, p.enhance);
 
     if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
@@ -654,7 +657,6 @@ function statusText(p) {
     ? `\n[포인트 획득: 🛑 제한됨 (${Math.max(0, MAX_POINTS_PER_6H - recentEarned)}P 남음)]`
     : `\n[포인트 획득: ✅ 가능 (${MAX_POINTS_PER_6H - recentEarned}P 남음)]`;
   
-  // [수정] 주령 소지량 표시 (강화 배율이 적용되지 않은 순수 흡수량)
   const curseDisplay = p.absorbedPower > 0 ? `\n[주령 소지: +${p.absorbedPower}]` : "";
 
   return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}${curseDisplay}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
@@ -695,7 +697,8 @@ app.post("/chat", async (req, res) => {
       enhance: 0, absorbedPower: 0, bloodStack: 0, domainBlocked: tech.type === "heavenly",
       domainName: generateDomainName({ enhance: 0 }), battleCount: 0, battleWindow: kst6hWindow(),
       curseBattles: 0, lastCurseHour: kstHourString(), curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
-      inventory: [], equippedTool: null, earnedPointsHistory: []
+      inventory: [], equippedTool: null, earnedPointsHistory: [],
+      curtainBypassCount: 0, lastBypassTime: 0
     };
     players[id] = newPlayer;
     await savePlayer(newPlayer);
@@ -795,7 +798,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
   }
 
-  // 6. 주령전투 (수정됨)
+  // 6. 주령전투
   if (msg === "/주령전투") {
     const hour = kstHourString();
     if (p.lastCurseHour !== hour) { 
@@ -813,14 +816,11 @@ app.post("/chat", async (req, res) => {
 
     if (sp >= cp) {
       addUnrestrictedPoints(p, 1);
-      
-      // [추가] 주령조술 흡수 로직: 50% 확률로 주령 전투력의 1/5 흡수
       if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
         const absorbAmount = Math.floor(cp / 5);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
         resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
       }
-
       await savePlayer(p); players[id] = p;
       resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
     } else {
@@ -830,7 +830,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(resultMsg));
   }
 
-  // 7. 특급 주령 (수정됨)
+  // 7. 특급 주령
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
@@ -857,14 +857,11 @@ app.post("/chat", async (req, res) => {
       const reward = rewardByPower(bossPower);
       addUnrestrictedPoints(p, reward);
       raid.claimed[id] = true;
-
-      // [추가] 특급 주령 흡수 로직: 최강 술사가 보스 전투력의 1/20 흡수
       if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
         const absorbAmount = Math.floor(bossPower / 20);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
         msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
       }
-
       await savePlayer(p); players[id] = p; 
       msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
     } else {
@@ -883,9 +880,38 @@ app.post("/chat", async (req, res) => {
     const e = getPlayerByName(targetName);
     if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
     if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
-    if (e.curtainActiveUntil > kstNow().getTime()) return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!`));
 
-    if (p.curtainActiveUntil > kstNow().getTime()) { p.curtainActiveUntil = 0; await savePlayer(p); }
+    // [수정] 주구(천역모, 흑승) 장막 돌파 및 횟수 제한 로직
+    const isBypassTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
+    const nowMs = kstNow().getTime();
+    let canBypass = false;
+    let bypassMsg = "";
+
+    if (e.curtainActiveUntil > nowMs) {
+      if (isBypassTool) {
+        // 6시간 주기 확인 및 초기화
+        if (nowMs - p.lastBypassTime > BYPASS_RESET_MS) {
+          p.curtainBypassCount = 0;
+          p.lastBypassTime = nowMs;
+        }
+
+        if (p.curtainBypassCount < MAX_BYPASS_COUNT) {
+          canBypass = true;
+          p.curtainBypassCount += 1;
+          p.lastBypassTime = nowMs;
+          bypassMsg = `\n✨ [주구 발동] ${p.equippedTool}의 힘으로 장막을 강제 돌파합니다! (남은 횟수: ${MAX_BYPASS_COUNT - p.curtainBypassCount}회)`;
+          await savePlayer(p); players[id] = p;
+        } else {
+          return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!\n(주구 돌파 횟수 6시간 내 ${MAX_BYPASS_COUNT}회를 모두 소진했습니다.)`));
+        }
+      } else {
+        return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!`));
+      }
+    }
+
+    // 장막 돌파 성공 시 공격자의 장막 해제
+    if (p.curtainActiveUntil > nowMs) { p.curtainActiveUntil = 0; await savePlayer(p); }
+    
     p.battleCount += 1;
 
     const top3 = top3Names();
@@ -898,7 +924,7 @@ app.post("/chat", async (req, res) => {
       enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
     }
 
-    // [수정] 마허라 이벤트 처리 로직
+    // [마허라 이벤트 처리 로직]
     if (r.mahoragaEvent) {
       let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
       
@@ -930,7 +956,7 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}`;
+    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
     
     if (enemyDomainAlert) {
         resultText = enemyDomainAlert + "\n" + resultText;
