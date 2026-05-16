@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (7.5 + 5.6 Enhanced)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.0 - Fixed & Enhanced)
 // 개발자: Mindlogic (SAIT 3 Pro)
 // ==========================================================================
 
@@ -333,7 +333,7 @@ function heavenlyBase(grade) {
   return 1;
 }
 
-// [통합 핵심] 모든 로직을 포함하는 파워 계산기
+// [핵심 수정] 모든 로직이 정렬된 파워 계산기
 function calculatePower(p, e, opts = {}) {
   let power = 0;
   let log = "";
@@ -357,12 +357,13 @@ function calculatePower(p, e, opts = {}) {
 
   power += p.absorbedPower;
 
-  // 2. 주구 기본 파워 추가 (상태창 일치용)
-  if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
-    power += CURSED_TOOLS_DATA[p.equippedTool].power;
+  // 2. [수정] 무하한 제한 로직 (강화 적용 전 실행)
+  if (p.technique === "무하한 술식" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
+    power = 10;
+    log += " 무하한 제한!";
   }
 
-  // 3. 특수 술식 로직 (5.6 버전 디테일 통합)
+  // 3. 특수 술식 및 강화 로직
   if (!ignoreSpecial) {
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
@@ -386,9 +387,6 @@ function calculatePower(p, e, opts = {}) {
     if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
       power += Math.floor(power / 3);
       log += " 마허라 동기화";
-    }
-    if (p.techniqueType === "limitless" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
-      power = 10; log += " 무하한 제한!";
     }
     if (p.techniqueType === "jackpot" && Math.random() < 0.0777) { power *= 1.7; log += " 잭팟"; }
     if (p.techniqueType === "ratio" && Math.random() < 0.7) { power *= 1.3; log += " 십획"; }
@@ -434,9 +432,12 @@ function calculatePower(p, e, opts = {}) {
       log += " 흑섬";
       blackText = blackFlashText();
     }
+  } else {
+    // [핵심 수정] 상태창용(ignoreSpecial: true)일 때도 강화 배수는 적용함
+    power *= Math.pow(1.2, p.enhance);
   }
 
-  // 4. 주구 특수 효과 (전투력 수치 보정)
+  // 4. 주구 효과 및 보정
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     const tool = CURSED_TOOLS_DATA[p.equippedTool];
     if (tool.effect === "폭주") {
@@ -448,12 +449,13 @@ function calculatePower(p, e, opts = {}) {
       power += Math.floor(e.basePower * 0.1); 
       log += " [용골 흡수!]";
     }
+    // 주구 기본 파워 추가
+    power += tool.power;
   }
 
   return { power: Math.floor(power), log, domainText, blackText };
 }
 
-// [중요] 전투 시 주구의 '억제/봉인' 효과를 별도 적용하는 함수
 function calculatePowerWithToolEffects(p, e, opts = {}) {
   let result = calculatePower(p, e, opts);
   if (p.equippedTool === "「천역모」") { result.power -= 30; result.log += " [천역모 억제]"; }
@@ -461,7 +463,6 @@ function calculatePowerWithToolEffects(p, e, opts = {}) {
   return result;
 }
 
-// [중요] 상태창 전투력 계산 함수 (calculatePower와 100% 일치)
 function statusPower(p) {
   const res = calculatePower(p, p, { ignoreSpecial: true });
   return Math.floor(res.power);
@@ -489,7 +490,7 @@ function battle(a, b) {
   let Ap = A.power;
   let Bp = B.power;
 
-  // 특수 기술 보정 (성간비행, 무위전변, BOM-BA-YE 등)
+  // 특수 기술 보정
   if (a.technique === "성간비행") {
     const rate = (Ap < Bp) ? 0.35 : 0.20;
     Bp = Math.floor(Bp * (1 - rate));
@@ -862,6 +863,12 @@ app.post("/chat", async (req, res) => {
     let deathTriggered = false;
     let pointGainMsg = "";
 
+    // [핵심 수정] 상대방의 영역전개 성공 여부를 확인하여 알림 추가
+    let enemyDomainAlert = "";
+    if (e.enhance >= 6 && e.domainName !== "❌ 미발현") {
+      enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
+    }
+
     if (r.mahoragaEvent) {
       let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n마허라 소환!`;
       if (p.techniqueType !== "immortal") { await deletePlayer(id); msgText += `\n${p.nickname}님이 사망했습니다.`; if (top3.includes(p.nickname)) deathTriggered = true; } else { await savePlayer(p); }
@@ -878,6 +885,11 @@ app.post("/chat", async (req, res) => {
     }
 
     let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}`;
+    
+    // 상대 영역전개 성공 알림을 텍스트에 삽입
+    if (enemyDomainAlert) {
+        resultText = enemyDomainAlert + "\n" + resultText;
+    }
 
     if (r.loser.techniqueType !== "immortal") {
       await deletePlayer(r.loser.userId);
@@ -894,3 +906,8 @@ app.post("/chat", async (req, res) => {
 
   return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리"));
 });
+
+// 헬퍼 함수 (Raid 시간 체크용)
+function raidHour() {
+  return raid.hour;
+}
