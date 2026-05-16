@@ -1,6 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.0 - Fixed & Enhanced)
-// 개발자: Mindlogic (SAIT 3 Pro)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.3 - Curse Manipulation Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -28,6 +27,7 @@ app.use("/images", express.static(path.join(__dirname, "public/images")));
 const BASE_URL = "https://curse-bot-4igy.onrender.com";
 
 const DEATH_IMAGE = "/images/death.png";
+const MAH_IMAGE = "/images/Mahoraga.jpg";
 const FIGHT_IMAGES = [
   "/images/fight scene1.jpg",
   "/images/fight scene2.jpg",
@@ -56,7 +56,7 @@ const playerSchema = new mongoose.Schema({
   energyGrade: String,
   energyBonus: Number,
   enhance: Number,
-  absorbedPower: Number,
+  absorbedPower: Number, // 주령조술로 흡수한 누적 전투력
   bloodStack: Number,
   domainBlocked: Boolean,
   domainName: String,
@@ -118,7 +118,7 @@ const aiNarrations = {
     "💥 격돌! 주력이 충돌하며 발생하는 충격파가 지면을 송두리째 흔든다!",
     "✨ 눈을 멀게 하는 빛! 술식과 술식이 맞물리며 초현실적인 풍경이 펼쳐진다!",
     "💢 콰아앙! 단순한 타격이 아니다. 공간 자체가 짓눌리는 소리가 들려온다!",
-    "🌀 소용돌이치는 에너지! 서로의 술식을 상쇄하려는 처절한 몸부림이 이어진다!"
+    "🌀 소용돌이치는 에너지! 서로를 상쇄하려는 처절한 몸부림이 이어진다!"
   ],
   domain: [
     "🌌 영역전개(領域展開)... 세계의 법칙이 재정의된다!",
@@ -258,7 +258,7 @@ const techImages = {
   "모방 술식": ["/images/모방.jpg", "/images/모방 1차.jpg", "/images/모방 2차.jpg", "/images/모방 최종.jpg"],
   "주령조술": ["/images/주령조술.jpg", "/images/주령조술 1차.jpg", "/images/주령조술 2차.jpg", "/images/주령조술 최종.jpg"],
   "적혈조술": ["/images/적혈조술.jpg", "/images/적혈조술 1차.jpg", "/images/적혈조술 2차.jpg", "/images/적혈조술 최종.jpg"],
-  "좌살박도": ["/images/좌살박도.jpg", "/images/좌살박도 1차.jpg", "/images/좌살박도 2차.jpg", "/images/좌살박도 3차.jpg"],
+  "좌살박도": ["/images/좌살박도.jpg", "/images/좌살박도 1차.jpg", "/images/좌살박도 3차.jpg"],
   "투사주법": ["/images/투사주법.jpg", "/images/투사주법 1차.jpg", "/images/투사주법 2차.jpg", "/images/투사주법 최종.jpg"],
   "주복사사": ["/images/주복사사.jpg", "/images/주복사사 1차.jpg", "/images/주복사사 2차.jpg", "/images/주복사사 최종.jpg"],
   "BOM-BA-YE": ["/images/봄바야.jpg", "/images/봄바야 1차.jpg", "/images/봄바야 2차.jpg", "/images/봄바야 최종.jpg"],
@@ -333,7 +333,6 @@ function heavenlyBase(grade) {
   return 1;
 }
 
-// [핵심 수정] 모든 로직이 정렬된 파워 계산기
 function calculatePower(p, e, opts = {}) {
   let power = 0;
   let log = "";
@@ -345,7 +344,6 @@ function calculatePower(p, e, opts = {}) {
   log += getNarration('intro');
   if (opts.extraLog) log += " " + opts.extraLog;
 
-  // 1. 기초 파워 설정
   if (p.techniqueType === "fish") {
     power = p.basePower * fishFactor(p.energyGrade);
     log += " 어주자(지수성장)";
@@ -355,15 +353,14 @@ function calculatePower(p, e, opts = {}) {
     power = p.basePower + p.energyBonus;
   }
 
+  // [핵심] 주령조술 흡수량은 강화 배율이 적용되지 않도록 합산 위치 고정
   power += p.absorbedPower;
 
-  // 2. [수정] 무하한 제한 로직 (강화 적용 전 실행)
   if (p.technique === "무하한 술식" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
     power = 10;
     log += " 무하한 제한!";
   }
 
-  // 3. 특수 술식 및 강화 로직
   if (!ignoreSpecial) {
     if (p.techniqueType === "copy") {
       const enemyTotal = e.basePower + e.energyBonus + e.absorbedPower;
@@ -381,7 +378,7 @@ function calculatePower(p, e, opts = {}) {
     if (p.technique === "적혈조술") { power += p.bloodStack * 1; log += ` 혈식+${p.bloodStack}`; }
     if (p.techniqueType === "energy_counter") { power += e.energyBonus * 2; log += " 추령주법"; }
 
-    // 강화 배수 적용
+    // [강화 배율 적용] absorbedPower가 포함된 전체 power에 배율을 곱함
     power *= Math.pow(1.2, p.enhance);
 
     if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
@@ -396,7 +393,6 @@ function calculatePower(p, e, opts = {}) {
       else if (pr > er) { power *= 2; log += " 투사주법"; }
     }
 
-    // 영역전개 로직
     if (!(p.techniqueType === "heavenly" || e.techniqueType === "heavenly")) {
       if (p.enhance >= 6 && !p.domainBlocked) {
         let domainChance = 0.6; 
@@ -433,11 +429,9 @@ function calculatePower(p, e, opts = {}) {
       blackText = blackFlashText();
     }
   } else {
-    // [핵심 수정] 상태창용(ignoreSpecial: true)일 때도 강화 배수는 적용함
     power *= Math.pow(1.2, p.enhance);
   }
 
-  // 4. 주구 효과 및 보정
   if (p.equippedTool && CURSED_TOOLS_DATA[p.equippedTool]) {
     const tool = CURSED_TOOLS_DATA[p.equippedTool];
     if (tool.effect === "폭주") {
@@ -449,7 +443,6 @@ function calculatePower(p, e, opts = {}) {
       power += Math.floor(e.basePower * 0.1); 
       log += " [용골 흡수!]";
     }
-    // 주구 기본 파워 추가
     power += tool.power;
   }
 
@@ -490,7 +483,6 @@ function battle(a, b) {
   let Ap = A.power;
   let Bp = B.power;
 
-  // 특수 기술 보정
   if (a.technique === "성간비행") {
     const rate = (Ap < Bp) ? 0.35 : 0.20;
     Bp = Math.floor(Bp * (1 - rate));
@@ -535,14 +527,30 @@ function battle(a, b) {
   if (a.techniqueType === "mahoraga" && Math.random() < 0.2 && Bf.power < 300) mahoragaEvent = true;
   if (b.techniqueType === "mahoraga" && Math.random() < 0.2 && Af.power < 300) mahoragaEvent = true;
 
-  if (mahoragaEvent) return { winner: null, loser: null, A: Af, B: Bf, mahoragaEvent: true };
+  if (mahoragaEvent) {
+    let target = (a.techniqueType === "mahoraga") ? b : a;
+    let targetPower = (a.techniqueType === "mahoraga") ? Bf.power : Af.power;
+    let isTargetDead = targetPower < 600;
+
+    return { 
+      winner: null, 
+      loser: isTargetDead ? target : null, 
+      A: Af, 
+      B: Bf, 
+      mahoragaEvent: true,
+      targetDead: isTargetDead 
+    };
+  }
 
   let winner = Af.power >= Bf.power ? a : b;
   let loser = winner === a ? b : a;
 
   if (winner.techniqueType === "curse_absorb") {
-    winner.absorbedPower += Math.floor((winner.basePower + winner.energyBonus) / 5);
+    const absorbAmount = Math.floor((loser.basePower + loser.energyBonus) / 5);
+    winner.absorbedPower = (winner.absorbedPower || 0) + absorbAmount;
+    winner.isAbsorbing = true; 
   }
+  
   if (winner.technique === "적혈조술") {
     winner.bloodStack += 1;
   }
@@ -645,7 +653,11 @@ function statusText(p) {
   const pointInfo = recentEarned >= MAX_POINTS_PER_6H 
     ? `\n[포인트 획득: 🛑 제한됨 (${Math.max(0, MAX_POINTS_PER_6H - recentEarned)}P 남음)]`
     : `\n[포인트 획득: ✅ 가능 (${MAX_POINTS_PER_6H - recentEarned}P 남음)]`;
-  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
+  
+  // [수정] 주령 소지량 표시 (강화 배율이 적용되지 않은 순수 흡수량)
+  const curseDisplay = p.absorbedPower > 0 ? `\n[주령 소지: +${p.absorbedPower}]` : "";
+
+  return `[플레이어:${p.nickname}]\n{술식:${p.technique}(${p.enhance}강)}\n[전투력:${sp}]${toolStatus}${curseDisplay}\n[소지 포인트:${p.point}]${pointInfo}\n[주력량:${p.energyGrade}]\n[영역:${p.domainName.replace("❌ ", "")}]\n[장막:${curtainStatus}]`;
 }
 
 function getDynamicShopItems() {
@@ -783,7 +795,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
   }
 
-  // 6. 주령전투
+  // 6. 주령전투 (수정됨)
   if (msg === "/주령전투") {
     const hour = kstHourString();
     if (p.lastCurseHour !== hour) { 
@@ -801,8 +813,16 @@ app.post("/chat", async (req, res) => {
 
     if (sp >= cp) {
       addUnrestrictedPoints(p, 1);
+      
+      // [추가] 주령조술 흡수 로직: 50% 확률로 주령 전투력의 1/5 흡수
+      if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
+        const absorbAmount = Math.floor(cp / 5);
+        p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
+        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
+      }
+
       await savePlayer(p); players[id] = p;
-      resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)`;
+      resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
     } else {
       await savePlayer(p); players[id] = p;
       resultMsg = `👹 주령전투 패배...\n${p.nickname} vs 주령\n${sp} vs ${cp}`;
@@ -810,7 +830,7 @@ app.post("/chat", async (req, res) => {
     return res.json(replyText(resultMsg));
   }
 
-  // 7. 특급 주령
+  // 7. 특급 주령 (수정됨)
   if (msg === "/특급주령") {
     resetRaidIfNeeded();
     const minute = kstMinute();
@@ -837,8 +857,18 @@ app.post("/chat", async (req, res) => {
       const reward = rewardByPower(bossPower);
       addUnrestrictedPoints(p, reward);
       raid.claimed[id] = true;
+
+      // [추가] 특급 주령 흡수 로직: 최강 술사가 보스 전투력의 1/20 흡수
+      if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
+        const absorbAmount = Math.floor(bossPower / 20);
+        p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
+        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
+      }
+
       await savePlayer(p); players[id] = p; 
       msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
+    } else {
+      await savePlayer(p); players[id] = p;
     }
     return res.json(replyText(msgText));
   }
@@ -863,17 +893,29 @@ app.post("/chat", async (req, res) => {
     let deathTriggered = false;
     let pointGainMsg = "";
 
-    // [핵심 수정] 상대방의 영역전개 성공 여부를 확인하여 알림 추가
     let enemyDomainAlert = "";
     if (e.enhance >= 6 && e.domainName !== "❌ 미발현") {
       enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
     }
 
+    // [수정] 마허라 이벤트 처리 로직
     if (r.mahoragaEvent) {
-      let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n마허라 소환!`;
-      if (p.techniqueType !== "immortal") { await deletePlayer(id); msgText += `\n${p.nickname}님이 사망했습니다.`; if (top3.includes(p.nickname)) deathTriggered = true; } else { await savePlayer(p); }
-      if (e.techniqueType !== "immortal") { await deletePlayer(e.userId); msgText += `\n상대 ${e.nickname} 사망`; if (top3.includes(e.nickname)) deathTriggered = true; } else { await savePlayer(e); }
-      return res.json(replyCard("전투 결과", msgText, deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage())));
+      let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
+      
+      if (r.targetDead) {
+          const deadUser = r.loser;
+          msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
+          if (top3.includes(deadUser.nickname)) deathTriggered = true;
+          await deletePlayer(deadUser.userId);
+          await savePlayer(p); players[id] = p;
+      } else {
+          msgText += `✨ 마허라의 위압감이 전장을 짓누르지만, ${r.loser ? r.loser.nickname : (p.nickname === e.nickname ? e.nickname : p.nickname)}님은 버텨냈습니다!\n`;
+          await savePlayer(p); players[id] = p;
+          await savePlayer(e); players[e.userId] = e;
+      }
+      
+      const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
+      return res.json(replyCard("마허라 강림", msgText, img));
     }
 
     if (r.winner) {
@@ -882,11 +924,14 @@ app.post("/chat", async (req, res) => {
       else {
         pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
       }
+      
+      if (r.winner.isAbsorbing) {
+          pointGainMsg += `\n🌀 [주령조술] 상대의 에너지를 흡수하여 파워가 영구히 상승했습니다!`;
+      }
     }
 
     let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}`;
     
-    // 상대 영역전개 성공 알림을 텍스트에 삽입
     if (enemyDomainAlert) {
         resultText = enemyDomainAlert + "\n" + resultText;
     }
