@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.4 - Curtain Bypass Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.5 - Actual Curtain Destruction Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -70,7 +70,6 @@ const playerSchema = new mongoose.Schema({
   inventory: [String],
   equippedTool: String,
   earnedPointsHistory: { type: Array, default: [] },
-  // [추가] 장막 돌파 제한 관련 필드
   curtainBypassCount: { type: Number, default: 0 },
   lastBypassTime: { type: Number, default: 0 }
 }, { collection: "players" });
@@ -900,6 +899,12 @@ app.post("/chat", async (req, res) => {
           p.curtainBypassCount += 1;
           p.lastBypassTime = nowMs;
           bypassMsg = `\n✨ [주구 발동] ${p.equippedTool}의 힘으로 장막을 강제 돌파합니다! (남은 횟수: ${MAX_BYPASS_COUNT - p.curtainBypassCount}회)`;
+          
+          // [수정 핵심] 돌파 성공 시 상대방의 장막을 실제로 해제
+          e.curtainActiveUntil = 0;
+          await savePlayer(e);
+          players[e.userId] = e;
+          
           await savePlayer(p); players[id] = p;
         } else {
           return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!\n(주구 돌파 횟수 6시간 내 ${MAX_BYPASS_COUNT}회를 모두 소진했습니다.)`));
@@ -909,7 +914,7 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    // 장막 돌파 성공 시 공격자의 장막 해제
+    // 장막 돌파 성공 시 공격자의 장막 해제 (자신의 장막도 유지하지 않도록)
     if (p.curtainActiveUntil > nowMs) { p.curtainActiveUntil = 0; await savePlayer(p); }
     
     p.battleCount += 1;
