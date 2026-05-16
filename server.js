@@ -25,7 +25,7 @@ const ENHANCE_MAX = 16;
 // STATIC IMAGE & BASE URL
 // ==========================================
 app.use("/images", express.static(path.join(__dirname, "public/images")));
-const BASE_URL = "https://curse-bot-40zs.onrender.com";
+const BASE_URL = "https://curse-bot-4igy.onrender.com";
 
 const DEATH_IMAGE = "/images/death.png";
 const FIGHT_IMAGES = [
