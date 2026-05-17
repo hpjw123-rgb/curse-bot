@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v9.0.0 - JUJUTSU MASTER EDITION)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v9.0.1 - BUG FIXED EDITION)
 // ==========================================================================
 
 const express = require("express");
@@ -57,7 +57,7 @@ const playerSchema = new mongoose.Schema({
     energyGrade: String,
     energyBonus: Number,
     enhance: Number,
-    absorbedPower: { type: Number, default: 0 }, // 주령으로부터 흡수한 순수 에너지
+    absorbedPower: { type: Number, default: 0 }, 
     bloodStack: Number,
     domainBlocked: Boolean,
     domainName: String,
@@ -315,8 +315,6 @@ function calculatePower(p, e, opts = {}) {
     log += getNarration('intro');
     if (opts.extraLog) log += " " + opts.extraLog;
 
-    // [핵심 수정] 1. 기본 베이스 계산 (absorbedPower는 배율 적용 전 합산됨)
-    // absorbedPower는 강화(1.2^n)나 영역(2.0배)의 영향을 받지 않도록 베이스에 합산합니다.
     if (p.techniqueType === "fish") {
         power = (p.basePower * fishFactor(p.energyGrade)) + p.absorbedPower;
         log += " 어주자(지수성장)";
@@ -327,7 +325,7 @@ function calculatePower(p, e, opts = {}) {
     }
 
     if (p.technique === "무하한 술식" && p.energyGrade !== "특급" && p.energyGrade !== "1급") {
-        power = 10 + p.absorbedPower; // absorbedPower는 보존
+        power = 10 + p.absorbedPower; 
         log += " 무하한 제한!";
     }
 
@@ -348,12 +346,6 @@ function calculatePower(p, e, opts = {}) {
         if (p.technique === "적혈조술") { power += p.bloodStack * 1; log += ` 혈식+${p.bloodStack}`; }
         if (p.techniqueType === "energy_counter") { power += e.energyBonus * 2; log += " 추령주법"; }
 
-        // [배율 적용] 강화 배율은 absorbedPower가 포함된 total power에 적용됨
-        // 만약 absorbedPower가 배율을 아예 안 받아야 한다면 아래와 같이 분리해야 합니다.
-        // 하지만 보통 "전투력"은 최종 결과물이므로, 여기서는 
-        // (기본력 + 흡수력) * 강화배율 형태로 계산하여 '흡수된 에너지가 기본 바탕이 됨'을 구현합니다.
-        // 요구사항: "흡수된 에너지는 영역전개 버프를 받지 않음" -> 영역 전개 시에만 별도 처리.
-        
         power *= Math.pow(1.2, p.enhance);
 
         if (p.techniqueType === "mahoraga" && p.enhance >= 11) {
@@ -379,15 +371,9 @@ function calculatePower(p, e, opts = {}) {
 
                 if (Math.random() < domainChance) {
                     if (!blockDomain) {
-                        // [핵심 수정] 2. 영역전개 버프 적용 시 absorbedPower 제외
-                        // 영역 배율(2.0~2.2)은 (전체 power - absorbedPower)에만 적용됨
                         const domainMult = p.techniqueType === "receipt" ? 2.2 : 2.0;
-                        
-                        // 현재 power는 이미 강화배율이 적용된 상태임.
-                        // 강화배율을 역산하여 absorbedPower를 뺀 순수 기술력만 추출 후 배율 적용
                         const enhancementFactor = Math.pow(1.2, p.enhance);
                         const pureTechPower = (power - p.absorbedPower) / enhancementFactor;
-                        
                         power = (pureTechPower * domainMult) + p.absorbedPower;
                         
                         log += " 영역전개";
@@ -413,7 +399,6 @@ function calculatePower(p, e, opts = {}) {
             blackText = blackFlashText();
         }
     } else {
-        // ignoreSpecial true일 때도 absorbedPower는 포함하여 강화배율 적용
         power = (power + p.absorbedPower) * Math.pow(1.2, p.enhance);
     }
 
@@ -816,7 +801,6 @@ app.post("/chat", async (req, res) => {
         if (sp >= cp) {
             addUnrestrictedPoints(p, 1);
             if (p.techniqueType === "curse_absorb") {
-                // [핵심 수정] 주령 전투력의 1/20 흡수
                 const absorbAmount = Math.floor(cp / 20);
                 p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
                 absorptionMsg = `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
@@ -864,7 +848,6 @@ app.post("/chat", async (req, res) => {
             addUnrestrictedPoints(p, reward);
             raid.claimed[id] = true;
 
-            // [핵심 수정] 주령조술사 보스 전투력의 1/20 흡수
             let absorptionMsg = "";
             if (p.techniqueType === "curse_absorb") {
                 const absorbAmount = Math.floor(bossPower / 20);
@@ -960,33 +943,38 @@ app.post("/chat", async (req, res) => {
         }
 
         let deathMsg = "";
+        let isSelfDead = false;
+
         if (r.loser && r.loser.techniqueType !== "immortal") {
             const deadUser = r.loser;
-            await deletePlayer(deadUser.userId);
             if (deadUser.userId === id) {
+                isSelfDead = true;
                 deathMsg = `\n💀 ${p.nickname}님이 사망했습니다.`;
                 if (top3.includes(p.nickname)) deathTriggered = true;
             } else {
                 deathMsg = `\n💀 ${deadUser.nickname}님이 사망했습니다.`;
                 if (top3.includes(deadUser.nickname)) deathTriggered = true;
             }
+            await deletePlayer(deadUser.userId);
         } 
         else if (r.loser && r.loser.techniqueType === "immortal") {
             r.loser.point = 0;
-            if (r.loser.userId === id) {
-                deathMsg = `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
-            } else {
-                deathMsg = `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
-            }
-            await savePlayer(r.loser);
+            deathMsg = (r.loser.userId === id)
+                ? `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`
+                : `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
         }
 
         let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}${deathMsg}`;
         if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
 
-        await savePlayer(p); players[id] = p;
-        if (!(r.loser && r.loser.techniqueType !== "immortal")) {
-            await savePlayer(e); players[e.userId] = e;
+        // [핵심 수정] 본인이 사망했다면 다시 저장하지 않음
+        if (!isSelfDead) {
+            await savePlayer(p); 
+            players[id] = p;
+            if (!(r.loser && r.loser.userId === e.userId && r.loser.techniqueType !== "immortal")) {
+                await savePlayer(e); 
+                players[e.userId] = e;
+            }
         }
 
         const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
