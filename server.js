@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.4 - FIXED)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.5 - STABLE)
 // ==========================================================================
 
 const express = require("express");
@@ -862,7 +862,7 @@ app.post("/chat", async (req, res) => {
         if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
         if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
 
-        const isBypassTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
+        const isBypassTool = (p.equippedTool === "「천역모\"" || p.equippedTool === "「흑승\"");
         const nowMs = kstNow().getTime();
         let canBypass = false;
         let bypassMsg = "";
@@ -962,19 +962,32 @@ app.post("/chat", async (req, res) => {
     }
 
     if (msg === "/콜라니 수령") {
+        // 1. 점령 여부 확인
         if (!p.occupiedColony) return res.json(replyText("현재 점령 중인 콜로니가 없습니다."));
 
         const nowMs = kstNow().getTime();
-        const currentHour = kstHourString();
-        const lastClaimHour = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
+        const currentHourStr = kstHourString(); // "YYYY-MM-DDTHH"
 
-        if (lastClaimHour === currentHour) {
-            return res.json(replyText(`🚫 이미 이번 시간대에 포인트를 수령했습니다.`));
+        // 2. lastColonyClaimTime 에러 방지 로직
+        let lastClaimHourStr = "";
+        if (p.lastColonyClaimTime && p.lastColonyClaimTime > 0) {
+            try {
+                lastClaimHourStr = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
+            } catch (e) {
+                lastClaimHourStr = "";
+            }
         }
 
+        // 3. 시간 비교
+        if (lastClaimHourStr === currentHourStr) {
+            return res.json(replyText(`🚫 이미 이번 시간대(${currentHourStr.slice(11, 13)}시)에 포인트를 수령했습니다.`));
+        }
+
+        // 4. 보상 지급 및 데이터 업데이트
         p.point += COLONY_REWARD;
         p.lastColonyClaimTime = nowMs;
-        await savePlayer(p); players[id] = p;
+        await savePlayer(p);
+        players[id] = p;
 
         return res.json(replyText(`💰 [콜로니 보상 수령 완료]\n${p.occupiedColony}에서 ${COLONY_REWARD}P를 획득했습니다!\n다음 수령은 다음 정시부터 가능합니다.`));
     }
@@ -1045,4 +1058,4 @@ app.post("/chat", async (req, res) => {
     }
 
     return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리 /콜라니"));
-}); // <--- 이 부분이 누락되었던 닫기 구문입니다.
+});
