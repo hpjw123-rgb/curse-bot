@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.3 - Curse Absorb & Colony Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v9.0.0 - Data Integrity Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -22,7 +22,6 @@ const ENHANCE_MAX = 16;
 const MAX_BYPASS_COUNT = 2; 
 const BYPASS_RESET_MS = 6 * 60 * 60 * 1000;
 
-// Colony Constants
 const COLONY_NAMES = ["도쿄 제1 콜로니", "도쿄 제2 콜로니", "센다이 콜로니", "사쿠라지마 콜로니"];
 const COLONY_REWARD = 5; 
 const COLONY_BATTLE_COST = 1; 
@@ -73,7 +72,7 @@ const playerSchema = new mongoose.Schema({
   curtainBypassCount: { type: Number, default: 0 },
   lastBypassTime: { type: Number, default: 0 },
   occupiedColony: { type: String, default: null },
-  lastColonyClaimTime: { type: Number, default: 0 } // 콜로니 포인트 수령 시간 기록용 추가
+  lastColonyClaimTime: { type: Number, default: 0 }
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
@@ -86,30 +85,10 @@ const colonySchema = new mongoose.Schema({
 
 const Colony = mongoose.model("Colony", colonySchema);
 
-let players = {};
-let colonies = {};
-
-async function loadData() {
-  try {
-    const pData = await Player.find().lean();
-    pData.forEach(p => { players[p.userId] = p; });
-    
-    const cData = await Colony.find().lean();
-    cData.forEach(c => { colonies[c.name] = c; });
-    
-    console.log("데이터 로드 완료 (플레이어/콜로니)");
-  } catch (err) {
-    console.error("데이터 로드 오류:", err);
-  }
-}
-
-async function savePlayer(p) { await Player.updateOne({ userId: p.userId }, p, { upsert: true }); }
-async function saveColony(c) { await Colony.updateOne({ name: c.name }, c, { upsert: true }); }
-async function deletePlayer(userId) { await Player.deleteOne({ userId }); delete players[userId]; }
+// [FIX] 메모리 변수(players, colonies)를 사용하지 않고 직접 DB에 접근합니다.
 
 mongoose.connect(MONGO_URI, { autoIndex: true })
-  .then(async () => {
-    await loadData();
+  .then(() => {
     app.listen(PORT, "0.0.0.0", () => console.log(`SERVER RUNNING ON PORT : ${PORT}`));
   })
   .catch(err => console.log("MongoDB 연결 실패:", err));
@@ -173,8 +152,10 @@ function addUnrestrictedPoints(p, amount) {
   return { success: true };
 }
 
-function top3Names() {
-  return Object.values(players).sort((a, b) => b.point - a.point).slice(0, 3).map(p => p.nickname);
+// [FIX] DB에서 직접 상위 플레이어를 조회하도록 변경
+async function top3Names() {
+  const list = await Player.find().sort({ point: -1 }).limit(3);
+  return list.map(p => p.nickname);
 }
 
 // ==========================================
@@ -245,7 +226,7 @@ const techImages = {
   "불사": ["/images/불사.jpg", "/images/불사 1차.jpg", "/images/불사 2차.jpg", "/images/불사 최종.jpg"],
   "천여주박": ["/images/천여주박.jpg", "/images/천여주박 1차.jpg", "/images/천여주박 2차.jpg", "/images/천여주박 최종.jpg"],
   "초미지규": ["/images/초미지규.jpg", "/images/초미지규 1차.jpg", "/images/초미지규 2차.jpg", "/images/초미지규 최종.jpg"],
-  "재계상": ["/images/재계상.jpg", "/images/재계상 1차.jpg", "/images/재계상 2차.jpg", "/images/재계상 최종.jpg"],
+  "재계상": ["/images/재계상.jpg", "/images/재계상 1차.jpg", "/images/재계상 3차.jpg"],
   "십획주법": ["/images/십획주법.jpg", "/images/십획주법 1차.jpg", "/images/십획주법 2차.jpg", "/images/십획주법 최종.jpg"]
 };
 
@@ -597,20 +578,16 @@ function replyCard(title, desc, imageUrl) {
   };
 }
 
-function getPlayerByName(name) {
-  return Object.values(players).find(p => p.nickname === name);
-}
-
 function isValidName(name) {
   return typeof name === "string" && name.trim().length >= 1;
 }
 
-function isDuplicateName(name) {
-  return Object.values(players).some(p => p.nickname === name);
+async function isDuplicateName(name) {
+  const player = await Player.findOne({ nickname: name });
+  return !!player;
 }
 
-function rankingText() {
-  const list = Object.values(players).sort((a, b) => b.point - a.point);
+function rankingText(list) {
   if (list.length === 0) return "랭킹 없음";
   let lines = ["🏆 전체 주술사 랭킹"];
   list.forEach((pl, i) => { lines.push(`${i + 1}위 ${pl.nickname} · ${pl.point}점`); });
@@ -650,406 +627,414 @@ app.post("/chat", async (req, res) => {
   const msg = req.body?.userRequest?.utterance;
   if (!id || !msg) return res.json(replyText("요청 형식 오류"));
 
-  const p = players[id];
+  try {
+    // [FIX] 모든 로직의 시작에서 DB로부터 최신 플레이어 데이터를 가져옵니다.
+    const p = await Player.findOne({ userId: id });
 
-  // 1. 가입
-  if (msg.startsWith("/가입")) {
-    const name = msg.replace("/가입", "").trim();
-    if (!isValidName(name)) return res.json(replyText("닉네임을 입력해주세요."));
-    if (name.length > MAX_NAME_LEN) return res.json(replyText("닉네임은 최대 10자까지 가능합니다."));
-    if (isDuplicateName(name)) return res.json(replyText("이미 사용 중인 닉네임입니다."));
-    
-    const tech = techniques[Math.floor(Math.random() * techniques.length)];
-    const energy = energyGrades[Math.floor(Math.random() * energyGrades.length)];
-    const newPlayer = {
-      userId: id, nickname: name, point: 0, technique: tech.name, techniqueGrade: tech.grade,
-      techniqueType: tech.type, basePower: tech.power, energyGrade: energy.name, energyBonus: energy.bonus,
-      enhance: 0, absorbedPower: 0, bloodStack: 0, domainBlocked: tech.type === "heavenly",
-      domainName: generateDomainName({ enhance: 0 }), battleCount: 0, battleWindow: kst6hWindow(),
-      curseBattles: 0, lastCurseHour: kstHourString(), curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
-      inventory: [], equippedTool: null, earnedPointsHistory: [],
-      curtainBypassCount: 0, lastBypassTime: 0, occupiedColony: null,
-      lastColonyClaimTime: 0
-    };
-    players[id] = newPlayer;
-    await savePlayer(newPlayer);
-    return res.json(replyCard(newPlayer.technique, statusText(newPlayer), techniqueImageUrl(newPlayer)));
-  }
-
-  if (!p) return res.json(replyText("/가입 필요"));
-
-  // 2. 기본
-  if (msg === "/상태") return res.json(replyCard(p.technique, statusText(p), techniqueImageUrl(p)));
-  if (msg === "/랭킹") return res.json(replyText(rankingText()));
-
-  // 3. 강화
-  if (msg === "/강화") {
-    if (p.enhance >= ENHANCE_MAX) return res.json(replyCard(p.technique, "강화 최대치입니다.\n" + statusText(p), techniqueImageUrl(p)));
-    const next = p.enhance + 1;
-    const cost = next;
-    const rate = enhanceRates[next] ?? 0.02;
-    if (p.point < cost) return res.json(replyCard(p.technique, `포인트 부족 (필요 ${cost}점)\n` + statusText(p), techniqueImageUrl(p)));
-    
-    p.point -= cost;
-    if (Math.random() < rate) {
-      p.enhance = next; p.domainName = generateDomainName(p);
-      await savePlayer(p); players[id] = p; 
-      return res.json(replyCard(p.technique, `강화 성공! 현재 강화: ${p.enhance}\n` + statusText(p), techniqueImageUrl(p)));
+    // 1. 가입
+    if (msg.startsWith("/가입")) {
+      const name = msg.replace("/가입", "").trim();
+      if (!isValidName(name)) return res.json(replyText("닉네임을 입력해주세요."));
+      if (name.length > MAX_NAME_LEN) return res.json(replyText("닉네임은 최대 10자까지 가능합니다."));
+      if (await isDuplicateName(name)) return res.json(replyText("이미 사용 중인 닉네임입니다."));
+      
+      const tech = techniques[Math.floor(Math.random() * techniques.length)];
+      const energy = energyGrades[Math.floor(Math.random() * energyGrades.length)];
+      const newPlayer = {
+        userId: id, nickname: name, point: 0, technique: tech.name, techniqueGrade: tech.grade,
+        techniqueType: tech.type, basePower: tech.power, energyGrade: energy.name, energyBonus: energy.bonus,
+        enhance: 0, absorbedPower: 0, bloodStack: 0, domainBlocked: tech.type === "heavenly",
+        domainName: generateDomainName({ enhance: 0 }), battleCount: 0, battleWindow: kst6hWindow(),
+        curseBattles: 0, lastCurseHour: kstHourString(), curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
+        inventory: [], equippedTool: null, earnedPointsHistory: [],
+        curtainBypassCount: 0, lastBypassTime: 0, occupiedColony: null,
+        lastColonyClaimTime: 0
+      };
+      await Player.create(newPlayer);
+      return res.json(replyCard(newPlayer.technique, statusText(newPlayer), techniqueImageUrl(newPlayer)));
     }
-    await savePlayer(p); players[id] = p; 
-    return res.json(replyCard(p.technique, `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)\n` + statusText(p), techniqueImageUrl(p)));
-  }
 
-  // 4. 상점/구매
-  if (msg === "/상점") {
-    const currentShop = getDynamicShopItems();
-    let shopMsg = `🛒 [${kstHourString().slice(0, 13)}시 한정 상점]\n━━━━━━━━━━━━\n`;
-    currentShop.forEach((item, idx) => { shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`; });
-    shopMsg += "━━━━━━━━━━━━\n구매: /구매 [번호]";
-    return res.json(replyText(shopMsg));
-  }
+    if (!p) return res.json(replyText("/가입 필요"));
 
-  if (msg.startsWith("/구매")) {
-    const idx = parseInt(msg.replace("/구매", "").trim()) - 1;
-    const currentShop = getDynamicShopItems();
-    const item = currentShop[idx];
-    if (!item) return res.json(replyText("잘못된 번호입니다."));
-    if (p.point < item.price) return res.json(replyText("포인트가 부족합니다."));
-    
-    p.point -= item.price;
-    if (item.id === "sukuna_finger") {
-      const currentIdx = energyGrades.findIndex(g => g.name === p.energyGrade);
-      if (currentIdx > 0 && Math.random() < 0.5) {
-        const nextGrade = energyGrades[currentIdx - 1];
-        p.energyGrade = nextGrade.name; p.energyBonus = nextGrade.bonus;
-        await savePlayer(p); players[id] = p;
-        return res.json(replyText(`✨ 스쿠나의 손가락 사용 성공!\n주력 등급이 [${p.energyGrade}]로 상승했습니다!`));
-      } else {
-        await savePlayer(p); players[id] = p;
-        return res.json(replyText(`💀 스쿠나의 손가락을 사용했으나 실패했습니다...`));
+    // 2. 기본
+    if (msg === "/상태") return res.json(replyCard(p.technique, statusText(p), techniqueImageUrl(p)));
+    if (msg === "/랭킹") {
+      const list = await Player.find().sort({ point: -1 }).limit(10);
+      return res.json(replyText(rankingText(list)));
+    }
+
+    // 3. 강화
+    if (msg === "/강화") {
+      if (p.enhance >= ENHANCE_MAX) return res.json(replyCard(p.technique, "강화 최대치입니다.\n" + statusText(p), techniqueImageUrl(p)));
+      const next = p.enhance + 1;
+      const cost = next;
+      const rate = enhanceRates[next] ?? 0.02;
+      if (p.point < cost) return res.json(replyCard(p.technique, `포인트 부족 (필요 ${cost}점)\n` + statusText(p), techniqueImageUrl(p)));
+      
+      p.point -= cost;
+      if (Math.random() < rate) {
+        p.enhance = next; p.domainName = generateDomainName(p);
       }
-    } else if (item.id === "curtain") {
-      p.curtainActiveUntil = kstNow().getTime() + (12 * 60 * 60 * 1000);
-      await savePlayer(p); players[id] = p;
-      return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!`));
-    } else if (item.type === "tool") {
-      if (p.inventory.length >= 3) return res.json(replyText("인벤토리가 가득 찼습니다."));
-      p.inventory.push(item.name);
-      await savePlayer(p); players[id] = p; 
-      return res.json(replyText(`🗡️ 주구 [${item.name}]을(를) 구매했습니다!`));
+      await p.save();
+      const msgText = Math.random() < rate ? `강화 성공! 현재 강화: ${p.enhance}` : `강화 실패... (성공률 ${(rate * 100).toFixed(1)}%)`;
+      return res.json(replyCard(p.technique, `${msgText}\n` + statusText(p), techniqueImageUrl(p)));
     }
-    await savePlayer(p); players[id] = p;
-    return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
-  }
 
-  // 5. 인벤토리 / 장착 / 해제 / 삭제
-  if (msg === "/인벤토리") {
-    let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n보관 중인 주구: ${p.inventory.length}/3\n`;
-    if (p.inventory.length === 0) invMsg += "비어 있음\n";
-    else {
-      p.inventory.forEach((tool, idx) => { invMsg += `${idx + 1}. ${tool} ${p.equippedTool === tool ? "✅(장착중)" : ""}\n`; });
-      invMsg += "━━━━━━━━━━━━\n장착: /장착 [번호]\n해제: /해제 [번호]\n삭제: /삭제 [번호]";
+    // 4. 상점/구매
+    if (msg === "/상점") {
+      const currentShop = getDynamicShopItems();
+      let shopMsg = `🛒 [${kstHourString().slice(0, 13)}시 한정 상점]\n━━━━━━━━━━━━\n`;
+      currentShop.forEach((item, idx) => { shopMsg += `${idx + 1}. ${item.name} (${item.price}P)\n`; });
+      shopMsg += "━━━━━━━━━━━━\n구매: /구매 [번호]";
+      return res.json(replyText(shopMsg));
     }
-    return res.json(replyText(invMsg));
-  }
-  if (msg.startsWith("/장착")) {
-    const idx = parseInt(msg.replace("/장착", "").trim()) - 1;
-    if (p.inventory[idx]) {
-      p.equippedTool = p.inventory[idx];
-      await savePlayer(p); players[id] = p; 
-      return res.json(replyText(`⚔️ ${p.equippedTool}을(를) 장착했습니다!`));
-    }
-    return res.json(replyText("해당 번호의 주구가 없습니다."));
-  }
-  if (msg.startsWith("/해제")) {
-    const idx = parseInt(msg.replace("/해제", "").trim()) - 1;
-    if (p.equippedTool === p.inventory[idx]) {
-      p.equippedTool = null;
-      await savePlayer(p); players[id] = p;
-      return res.json(replyText(`✨ ${p.inventory[idx]}을(를) 해제했습니다.`));
-    }
-    return res.json(replyText("장착 중인 주구가 아닙니다."));
-  }
-  if (msg.startsWith("/삭제")) {
-    const idx = parseInt(msg.replace("/삭제", "").trim()) - 1;
-    if (p.inventory[idx]) {
-      const tool = p.inventory[idx];
-      p.inventory.splice(idx, 1);
-      if (p.equippedTool === tool) p.equippedTool = null;
-      await savePlayer(p); players[id] = p;
-      return res.json(replyText(`🗑️ [${tool}]을(를) 영구 삭제했습니다.`));
-    }
-    return res.json(replyText("해당 번호의 주구가 없습니다."));
-  }
-  if (msg === "/장막해제") {
-    if (p.curtainActiveUntil <= kstNow().getTime()) return res.json(replyText("🛡️ 현재 펼쳐진 장막이 없습니다."));
-    p.curtainActiveUntil = 0; await savePlayer(p); players[id] = p;
-    return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
-  }
 
-  // 6. 주령전투
-  if (msg === "/주령전투") {
-    const hour = kstHourString();
-    if (p.lastCurseHour !== hour) { p.lastCurseHour = hour; p.curseBattles = 0; await savePlayer(p); players[id] = p; }
-    if (p.curseBattles >= HOURLY_CURSE_BATTLES) return res.json(replyText(`🚫 이번 시간대(${hour.slice(11, 13)}시) 주령전투 횟수를 모두 사용했습니다.`));
-    
-    p.curseBattles += 1;
-    const sp = statusPower(p);
-    const cp = Math.floor(Math.random() * 90) + 10;
-    let resultMsg = "";
-
-    if (sp >= cp) {
-      addUnrestrictedPoints(p, 1);
-      // [FIX] 주령조술 에너지 흡수 로직 보강
-      if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
-        const absorbAmount = Math.floor(cp / 5);
-        p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
-      }
-      await savePlayer(p); players[id] = p;
-      resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
-    } else {
-      await savePlayer(p); players[id] = p;
-      resultMsg = `👹 주령전투 패배...\n${p.nickname} vs 주령\n${sp} vs ${cp}`;
-    }
-    return res.json(replyText(resultMsg));
-  }
-
-  // 7. 특급 주령 (Raid)
-  if (msg === "/특급주령") {
-    resetRaidIfNeeded();
-    const minute = kstMinute();
-    if (minute < 30) {
-      if (!raid.participants[id]) {
-        raid.participants[id] = { userId: id, nickname: p.nickname, power: statusPower(p) };
-        return res.json(replyText(`특급 주령 대기열 참가 완료\n보스: ${raid.boss}\n현재 참가자 수: ${Object.keys(raid.participants).length}`));
-      }
-      return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.`));
-    }
-    if (!raid.participants[id]) return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
-    if (raid.claimed[id]) return res.json(replyText("이미 보상을 수령했습니다."));
-    
-    if (raid.hour !== kstHourString().slice(0, 13)) return res.json(replyText("보상 기간이 종료되었습니다."));
-
-    const bossPower = raidPower();
-    const { maxP, maxV } = strongestParticipant();
-    const totalParticipantPower = Object.values(raid.participants).reduce((sum, part) => sum + part.power, 0);
-    const win = totalParticipantPower >= bossPower;
-    const participantList = Object.values(raid.participants).map(part => part.nickname).join(", ");
-
-    let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${participantList}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
-
-    if (win) {
-      const reward = rewardByPower(bossPower);
-      addUnrestrictedPoints(p, reward);
-      raid.claimed[id] = true;
-      if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
-        const absorbAmount = Math.floor(bossPower / 20);
-        p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
-      }
-      await savePlayer(p); players[id] = p; 
-      msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
-    } else {
-      await savePlayer(p); players[id] = p;
-    }
-    return res.json(replyText(msgText));
-  }
-
-  // 8. 전투 (플레이어 vs 플레이어)
-  if (msg.startsWith("/전투")) {
-    const w = kst6hWindow();
-    if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
-    if (p.battleCount >= BATTLE_LIMIT) return res.json(replyText(`전투 횟수를 모두 사용했습니다.`));
-
-    const targetName = msg.replace("/전투", "").trim();
-    const e = getPlayerByName(targetName);
-    if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
-    if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
-
-    const isBypassTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
-    const nowMs = kstNow().getTime();
-    let canBypass = false;
-    let bypassMsg = "";
-
-    if (e.curtainActiveUntil > nowMs) {
-      if (isBypassTool) {
-        if (nowMs - p.lastBypassTime > BYPASS_RESET_MS) { p.curtainBypassCount = 0; p.lastBypassTime = nowMs; }
-        if (p.curtainBypassCount < MAX_BYPASS_COUNT) {
-          canBypass = true;
-          p.curtainBypassCount += 1;
-          p.lastBypassTime = nowMs;
-          bypassMsg = `\n✨ [주구 발동] ${p.equippedTool}의 힘으로 장막을 강제 돌파합니다! (남은 횟수: ${MAX_BYPASS_COUNT - p.curtainBypassCount}회)`;
-          e.curtainActiveUntil = 0;
-          await savePlayer(e); players[e.userId] = e;
-          await savePlayer(p); players[id] = p;
+    if (msg.startsWith("/구매")) {
+      const idx = parseInt(msg.replace("/구매", "").trim()) - 1;
+      const currentShop = getDynamicShopItems();
+      const item = currentShop[idx];
+      if (!item) return res.json(replyText("잘못된 번호입니다."));
+      if (p.point < item.price) return res.json(replyText("포인트가 부족합니다."));
+      
+      p.point -= item.price;
+      if (item.id === "sukuna_finger") {
+        const currentIdx = energyGrades.findIndex(g => g.name === p.energyGrade);
+        if (currentIdx > 0 && Math.random() < 0.5) {
+          const nextGrade = energyGrades[currentIdx - 1];
+          p.energyGrade = nextGrade.name; p.energyBonus = nextGrade.bonus;
+          await p.save();
+          return res.json(replyText(`✨ 스쿠나의 손가락 사용 성공!\n주력 등급이 [${p.energyGrade}]로 상승했습니다!`));
         } else {
-          return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!\n(주구 돌파 횟수 6시간 내 ${MAX_BYPASS_COUNT}회를 모두 소진했습니다.)`));
+          await p.save();
+          return res.json(replyText(`💀 스쿠나의 손가락을 사용했으나 실패했습니다...`));
         }
-      } else {
-        return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!`));
+      } else if (item.id === "curtain") {
+        p.curtainActiveUntil = kstNow().getTime() + (12 * 60 * 60 * 1000);
+        await p.save();
+        return res.json(replyText(`🛡️ 장막을 즉시 펼쳤습니다!`));
+      } else if (item.type === "tool") {
+        if (p.inventory.length >= 3) return res.json(replyText("인벤토리가 가득 찼습니다."));
+        p.inventory.push(item.name);
+        await p.save();
+        return res.json(replyText(`🗡️ 주구 [${item.name}]을(를) 구매했습니다!`));
       }
+      await p.save();
+      return res.json(replyText(`${item.name}을(를) 구매했습니다.`));
     }
 
-    if (p.curtainActiveUntil > nowMs) { p.curtainActiveUntil = 0; await savePlayer(p); }
-    p.battleCount += 1;
-
-    const top3 = top3Names();
-    const r = battle(p, e);
-    let deathTriggered = false;
-    let pointGainMsg = "";
-    let enemyDomainAlert = "";
-
-    if (e.enhance >= 6 && e.domainName !== "❌ 미발현") {
-      enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
-    }
-
-    if (r.mahoragaEvent) {
-      let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
-      if (r.targetDead) {
-          const deadUser = r.loser;
-          msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
-          if (top3.includes(deadUser.nickname)) deathTriggered = true;
-          await deletePlayer(deadUser.userId);
-          await savePlayer(p); players[id] = p;
-      } else {
-          msgText += `✨ 마허라의 위압감이 전장을 짓누르지만, ${r.loser ? r.loser.nickname : (p.nickname === e.nickname ? e.nickname : p.nickname)}님은 버텨냈습니다!\n`;
-          await savePlayer(p); players[id] = p;
-          await savePlayer(e); players[e.userId] = e;
+    // 5. 인벤토리 / 장착 / 해제 / 삭제
+    if (msg === "/인벤토리") {
+      let invMsg = `🎒 [인벤토리]\n━━━━━━━━━━━━\n보관 중인 주구: ${p.inventory.length}/3\n`;
+      if (p.inventory.length === 0) invMsg += "비어 있음\n";
+      else {
+        p.inventory.forEach((tool, idx) => { invMsg += `${idx + 1}. ${tool} ${p.equippedTool === tool ? "✅(장착중)" : ""}\n`; });
+        invMsg += "━━━━━━━━━━━━\n장착: /장착 [번호]\n해제: /해제 [번호]\n삭제: /삭제 [번호]";
       }
-      const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
-      return res.json(replyCard("마허라 강림", msgText, img));
+      return res.json(replyText(invMsg));
     }
-
-    if (r.winner) {
-      const res = tryAddBattlePoints(r.winner, 5);
-      if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
-      else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
-    }
-
-    let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
-    if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
-
-    if (r.loser.techniqueType !== "immortal") {
-      await deletePlayer(r.loser.userId);
-      if (r.loser.userId === id) { 
-        resultText += `\n💀 ${p.nickname}님이 사망했습니다.`; 
-        if (top3.includes(p.nickname)) deathTriggered = true; 
-      } else { 
-        resultText += `\n💀 ${r.loser.nickname}님이 사망했습니다.`; 
-        if (top3.includes(r.loser.nickname)) deathTriggered = true; 
+    if (msg.startsWith("/장착")) {
+      const idx = parseInt(msg.replace("/장착", "").trim()) - 1;
+      if (p.inventory[idx]) {
+        p.equippedTool = p.inventory[idx];
+        await p.save();
+        return res.json(replyText(`⚔️ ${p.equippedTool}을(를) 장착했습니다!`));
       }
-    } else {
-      r.loser.point = 0;
-      if (r.loser.userId === id) {
-        resultText += `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
-      } else {
-        resultText += `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
+      return res.json(replyText("해당 번호의 주구가 없습니다."));
+    }
+    if (msg.startsWith("/해제")) {
+      const idx = parseInt(msg.replace("/해제", "").trim()) - 1;
+      if (p.equippedTool === p.inventory[idx]) {
+        p.equippedTool = null;
+        await p.save();
+        return res.json(replyText(`✨ ${p.inventory[idx]}을(를) 해제했습니다.`));
       }
+      return res.json(replyText("장착 중인 주구가 아닙니다."));
     }
-
-    await savePlayer(p); players[id] = p;
-    await savePlayer(e); players[e.userId] = e;
-
-    const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
-    return res.json(replyCard("전투 결과", resultText, img));
-  }
-
-  // 9. 콜로니 시스템
-  if (msg === "/콜라니") {
-    let msgText = `🚩 [콜로니 리스트]\n━━━━━━━━━━━━\n`;
-    COLONY_NAMES.forEach((name, idx) => {
-      const owner = colonies[name]?.ownerNickname ? `[점령: ${colonies[name].ownerNickname}]` : "[미점령]";
-      msgText += `${idx + 1}. ${name} ${owner}\n`;
-    });
-    msgText += "━━━━━━━━━━━━\n점령: /콜라니 [번호]\n━━━━━━━━━━━━\n💰 [포인트 수령]\n내가 점령한 콜로니가 있다면 `/콜라니 수령`으로 매 정시마다 5P를 받을 수 있습니다.";
-    return res.json(replyText(msgText));
-  }
-
-  // [NEW] 콜로니 포인트 수령 로직
-  if (msg === "/콜라니 수령") {
-    if (!p.occupiedColony) return res.json(replyText("현재 점령 중인 콜로니가 없습니다."));
-    
-    const nowMs = kstNow().getTime();
-    const currentHour = kstHourString(); // "YYYY-MM-DDTHH" 형태
-    
-    // 마지막 수령 시간이 현재 시간의 '시' 단위와 다르면 수령 가능
-    // 예: lastColonyClaimTime이 1시인데 현재가 2시라면 수령 가능
-    const lastClaimHour = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
-    
-    if (lastClaimHour === currentHour) {
-      return res.json(replyText(`🚫 이미 이번 시간대에 포인트를 수령했습니다.`));
-    }
-
-    p.point += COLONY_REWARD;
-    p.lastColonyClaimTime = nowMs;
-    await savePlayer(p); players[id] = p;
-
-    return res.json(replyText(`💰 [콜로니 보상 수령 완료]\n${p.occupiedColony}에서 ${COLONY_REWARD}P를 획득했습니다!\n다음 수령은 다음 정시부터 가능합니다.`));
-  }
-
-  if (msg.startsWith("/콜라니")) {
-    const idx = parseInt(msg.replace("/콜라니", "").trim()) - 1;
-    const colonyName = COLONY_NAMES[idx];
-    if (!colonyName) return res.json(replyText("잘못된 번호입니다."));
-
-    const targetColony = colonies[colonyName] || { name: colonyName, ownerId: null, ownerNickname: null };
-
-    if (p.occupiedColony) {
-      return res.json(replyText(`🚫 이미 [${p.occupiedColony}]를(를) 점령 중입니다.\n한 명당 하나의 콜로니만 점령할 수 있습니다.`));
-    }
-
-    if (!targetColony.ownerId) {
-      p.occupiedColony = colonyName;
-      targetColony.ownerId = id;
-      targetColony.ownerNickname = p.nickname;
-      await savePlayer(p);
-      await saveColony(targetColony);
-      colonies[colonyName] = targetColony;
-      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 `/콜라니 수령`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
-    }
-
-    if (targetColony.ownerId !== id) {
-      const owner = players[targetColony.ownerId];
-      if (!owner) return res.json(replyText("점령자가 이미 탈퇴했습니다. 콜로니를 재점령하세요."));
-
-      if (p.point < COLONY_BATTLE_COST) {
-        return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
+    if (msg.startsWith("/삭제")) {
+      const idx = parseInt(msg.replace("/삭제", "").trim()) - 1;
+      if (p.inventory[idx]) {
+        const tool = p.inventory[idx];
+        p.inventory.splice(idx, 1);
+        if (p.equippedTool === tool) p.equippedTool = null;
+        await p.save();
+        return res.json(replyText(`🗑️ [${tool}]을(를) 영구 삭제했습니다.`));
       }
+      return res.json(replyText("해당 번호의 주구가 없습니다."));
+    }
+    if (msg === "/장막해제") {
+      if (p.curtainActiveUntil <= kstNow().getTime()) return res.json(replyText("🛡️ 현재 펼쳐진 장막이 없습니다."));
+      p.curtainActiveUntil = 0; await p.save();
+      return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
+    }
 
-      p.point -= COLONY_BATTLE_COST;
-      await savePlayer(p); players[id] = p;
+    // 6. 주령전투
+    if (msg === "/주령전투") {
+      const hour = kstHourString();
+      if (p.lastCurseHour !== hour) { p.lastCurseHour = hour; p.curseBattles = 0; await p.save(); }
+      if (p.curseBattles >= HOURLY_CURSE_BATTLES) return res.json(replyText(`🚫 이번 시간대(${hour.slice(11, 13)}시) 주령전투 횟수를 모두 사용했습니다.`));
+      
+      p.curseBattles += 1;
+      const sp = statusPower(p);
+      const cp = Math.floor(Math.random() * 90) + 10;
+      let resultMsg = "";
 
-      const r = battle(p, owner, true);
-      let msgText = `🚩 [콜로니 쟁탈전]\n${p.nickname} vs ${owner.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('colony_clash')}\n`;
-
-      if (r.winner) {
-        const winner = r.winner;
-        const loser = r.loser;
-
-        if (owner.occupiedColony === colonyName) {
-          owner.occupiedColony = null;
-          await savePlayer(owner);
+      if (sp >= cp) {
+        addUnrestrictedPoints(p, 1);
+        if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
+          const absorbAmount = Math.floor(cp / 5);
+          p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
+          resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
         }
-
-        winner.occupiedColony = colonyName;
-        targetColony.ownerId = winner.userId;
-        targetColony.ownerNickname = winner.nickname;
-        
-        await savePlayer(winner);
-        await saveColony(targetColony);
-        colonies[colonyName] = targetColony;
-
-        msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n`;
-        msgText += `━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
+        await p.save();
+        resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
       } else {
-        msgText += `━━━━━━━━━━━━━━━━━━━━\n⚖️ 전투가 무승부로 끝났습니다. 점령자는 유지됩니다.`;
+        await p.save();
+        resultMsg = `👹 주령전투 패배...\n${p.nickname} vs 주령\n${sp} vs ${cp}`;
+      }
+      return res.json(replyText(resultMsg));
+    }
+
+    // 7. 특급 주령 (Raid)
+    if (msg === "/특급주령") {
+      resetRaidIfNeeded();
+      const minute = kstMinute();
+      if (minute < 30) {
+        if (!raid.participants[id]) {
+          raid.participants[id] = { userId: id, nickname: p.nickname, power: statusPower(p) };
+          return res.json(replyText(`특급 주령 대기열 참가 완료\n보스: ${raid.boss}\n현재 참가자 수: ${Object.keys(raid.participants).length}`));
+        }
+        return res.json(replyText(`이미 특급 주령 대기열에 참가했습니다.`));
+      }
+      if (!raid.participants[id]) return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
+      if (raid.claimed[id]) return res.json(replyText("이미 보상을 수령했습니다."));
+      if (raid.hour !== kstHourString().slice(0, 13)) return res.json(replyText("보상 기간이 종료되었습니다."));
+
+      const bossPower = raidPower();
+      const { maxP, maxV } = strongestParticipant();
+      const totalParticipantPower = Object.values(raid.participants).reduce((sum, part) => sum + part.power, 0);
+      const win = totalParticipantPower >= bossPower;
+      const participantList = Object.values(raid.participants).map(part => part.nickname).join(", ");
+
+      let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${participantList}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
+
+      if (win) {
+        const reward = rewardByPower(bossPower);
+        addUnrestrictedPoints(p, reward);
+        raid.claimed[id] = true;
+        if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
+          const absorbAmount = Math.floor(bossPower / 20);
+          p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
+          msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
+        }
+        await p.save();
+        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
+      } else {
+        await p.save();
       }
       return res.json(replyText(msgText));
-    } else {
-      return res.json(replyText("이미 본인이 점령 중인 콜로니입니다."));
     }
-  }
 
-  return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리 /콜라니"));
+    // 8. 전투 (플레이어 vs 플레이어)
+    if (msg.startsWith("/전투")) {
+      const w = kst6hWindow();
+      if (p.battleWindow !== w) { p.battleWindow = w; p.battleCount = 0; }
+      if (p.battleCount >= BATTLE_LIMIT) return res.json(replyText(`전투 횟수를 모두 사용했습니다.`));
+
+      const targetName = msg.replace("/전투", "").trim();
+      const e = await Player.findOne({ nickname: targetName });
+      if (!e) return res.json(replyText("대상을 찾을 수 없습니다."));
+      if (e.userId === id) return res.json(replyText("자기 자신과는 전투할 수 없습니다."));
+
+      const isBypassTool = (p.equippedTool === "「천역모」" || p.equippedTool === "「흑승」");
+      const nowMs = kstNow().getTime();
+      let canBypass = false;
+      let bypassMsg = "";
+
+      if (e.curtainActiveUntil > nowMs) {
+        if (isBypassTool) {
+          if (nowMs - p.lastBypassTime > BYPASS_RESET_MS) { p.curtainBypassCount = 0; p.lastBypassTime = nowMs; }
+          if (p.curtainBypassCount < MAX_BYPASS_COUNT) {
+            canBypass = true;
+            p.curtainBypassCount += 1;
+            p.lastBypassTime = nowMs;
+            bypassMsg = `\n✨ [주구 발동] ${p.equippedTool}의 힘으로 장막을 강제 돌파합니다! (남은 횟수: ${MAX_BYPASS_COUNT - p.curtainBypassCount}회)`;
+            e.curtainActiveUntil = 0;
+            await e.save();
+            await p.save();
+          } else {
+            return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!\n(주구 돌파 횟수 6시간 내 ${MAX_BYPASS_COUNT}회를 모두 소진했습니다.)`));
+          }
+        } else {
+          return res.json(replyText(`🛡️ ${e.nickname}님은 장막 중입니다!`));
+        }
+      }
+
+      if (p.curtainActiveUntil > nowMs) { p.curtainActiveUntil = 0; await p.save(); }
+      p.battleCount += 1;
+
+      const top3 = await top3Names();
+      const r = battle(p, e);
+      let deathTriggered = false;
+      let pointGainMsg = "";
+      let enemyDomainAlert = "";
+
+      if (e.enhance >= 6 && e.domainName !== "❌ 미발현") {
+        enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
+      }
+
+      if (r.mahoragaEvent) {
+        let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
+        if (r.targetDead) {
+            const deadUser = r.loser;
+            msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
+            if (top3.includes(deadUser.nickname)) deathTriggered = true;
+            await Player.deleteOne({ userId: deadUser.userId });
+            await p.save();
+        } else {
+            msgText += `✨ 마허라의 위압감이 전장을 짓누르지만, ${r.loser ? r.loser.nickname : (p.nickname === e.nickname ? e.nickname : p.nickname)}님은 버텨냈습니다!\n`;
+            await p.save();
+            await e.save();
+        }
+        const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
+        return res.json(replyCard("마허라 강림", msgText, img));
+      }
+
+      if (r.winner) {
+        const res = tryAddBattlePoints(r.winner, 5);
+        if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
+        else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
+      }
+
+      let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
+      if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
+
+      if (r.loser.techniqueType !== "immortal") {
+        await Player.deleteOne({ userId: r.loser.userId });
+        if (r.loser.userId === id) { 
+          resultText += `\n💀 ${p.nickname}님이 사망했습니다.`; 
+          if (top3.includes(p.nickname)) deathTriggered = true; 
+        } else { 
+          resultText += `\n💀 ${r.loser.nickname}님이 사망했습니다.`; 
+          if (top3.includes(r.loser.nickname)) deathTriggered = true; 
+        }
+      } else {
+        r.loser.point = 0;
+        if (r.loser.userId === id) {
+          resultText += `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
+        } else {
+          resultText += `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
+        }
+      }
+
+      await p.save();
+      await e.save();
+
+      const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
+      return res.json(replyCard("전투 결과", resultText, img));
+    }
+
+    // 9. 콜로니 시스템
+    if (msg === "/콜라니") {
+      // [FIX] 콜로니 목록을 DB에서 직접 가져옵니다.
+      const allColonies = await Colony.find();
+      let msgText = `🚩 [콜로니 리스트]\n━━━━━━━━━━━━\n`;
+      COLONY_NAMES.forEach((name, idx) => {
+        const colonyData = allColonies.find(c => c.name === name);
+        const owner = colonyData?.ownerNickname ? `[점령: ${colonyData.ownerNickname}]` : "[미점령]";
+        msgText += `${idx + 1}. ${name} ${owner}\n`;
+      });
+      msgText += "━━━━━━━━━━━━\n점령: /콜라니 [번호]\n━━━━━━━━━━━━\n💰 [포인트 수령]\n내가 점령한 콜로니가 있다면 `/콜라니 수령`으로 매 정시마다 5P를 받을 수 있습니다.";
+      return res.json(replyText(msgText));
+    }
+
+    // [FIX] 콜로니 포인트 수령 로직
+    if (msg === "/콜라니 수령") {
+      if (!p.occupiedColony) return res.json(replyText("현재 점령 중인 콜로니가 없습니다."));
+      
+      const nowMs = kstNow().getTime();
+      const currentHour = kstHourString(); 
+      const lastClaimHour = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
+      
+      if (lastClaimHour === currentHour) {
+        return res.json(replyText(`🚫 이미 이번 시간대에 포인트를 수령했습니다.`));
+      }
+
+      p.point += COLONY_REWARD;
+      p.lastColonyClaimTime = nowMs;
+      await p.save();
+
+      return res.json(replyText(`💰 [콜로니 보상 수령 완료]\n${p.occupiedColony}에서 ${COLONY_REWARD}P를 획득했습니다!\n다음 수령은 다음 정시부터 가능합니다.`));
+    }
+
+    if (msg.startsWith("/콜라니")) {
+      const idx = parseInt(msg.replace("/콜라니", "").trim()) - 1;
+      const colonyName = COLONY_NAMES[idx];
+      if (!colonyName) return res.json(replyText("잘못된 번호입니다."));
+
+      // [FIX] 메모리 객체가 아닌 DB에서 즉시 조회합니다.
+      let targetColony = await Colony.findOne({ name: colonyName });
+      if (!targetColony) {
+        // DB에 없는 콜로니라면 새로 생성하여 DB에 즉시 저장합니다.
+        targetColony = await Colony.create({ name: colonyName });
+      }
+
+      if (p.occupiedColony) {
+        return res.json(replyText(`🚫 이미 [${p.occupiedColony}]를(를) 점령 중입니다.\n한 명당 하나의 콜로니만 점령할 수 있습니다.`));
+      }
+
+      if (!targetColony.ownerId) {
+        p.occupiedColony = colonyName;
+        targetColony.ownerId = id;
+        targetColony.ownerNickname = p.nickname;
+        await p.save();
+        await targetColony.save();
+        return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 `/콜라니 수령`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
+      }
+
+      if (targetColony.ownerId !== id) {
+        const owner = await Player.findOne({ userId: targetColony.ownerId });
+        if (!owner) return res.json(replyText("점령자가 이미 탈퇴했습니다. 콜로니를 재점령하세요."));
+
+        if (p.point < COLONY_BATTLE_COST) {
+          return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
+        }
+
+        p.point -= COLONY_BATTLE_COST;
+        await p.save();
+
+        const r = battle(p, owner, true);
+        let msgText = `🚩 [콜로니 쟁탈전]\n${p.nickname} vs ${owner.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('colony_clash')}\n`;
+
+        if (r.winner) {
+          const winner = r.winner;
+          const loser = r.loser;
+
+          if (owner.occupiedColony === colonyName) {
+            owner.occupiedColony = null;
+            await owner.save();
+          }
+
+          winner.occupiedColony = colonyName;
+          targetColony.ownerId = winner.userId;
+          targetColony.ownerNickname = winner.nickname;
+          
+          await winner.save();
+          await targetColony.save();
+
+          msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n`;
+          msgText += `━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
+        } else {
+          msgText += `━━━━━━━━━━━━━━━━━━━━\n⚖️ 전투가 무승부로 끝났습니다. 점령자는 유지됩니다.`;
+        }
+        return res.json(replyText(msgText));
+      } else {
+        return res.json(replyText("이미 본인이 점령 중인 콜로니입니다."));
+      }
+    }
+
+    return res.json(replyText("명령어: /가입 /상태 /전투 닉네임 /주령전투 /특급주령 /랭킹 /강화 /상점 /인벤토리 /콜라니"));
+  } catch (err) {
+    console.error(err);
+    return res.json(replyText("시스템 오류가 발생했습니다. 잠시 후 다시 시도해주세요."));
+  }
 });
