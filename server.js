@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.5 - STABLE)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.6 - STABLE)
 // ==========================================================================
 
 const express = require("express");
@@ -899,14 +899,25 @@ app.post("/chat", async (req, res) => {
             enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
         }
 
+        // [수정] 마허라 이벤트 처리 로직 개선
         if (r.mahoragaEvent) {
             let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
             if (r.targetDead) {
                 const deadUser = r.loser;
                 msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
                 if (top3.includes(deadUser.nickname)) deathTriggered = true;
+                
+                // 사망자 즉시 삭제
                 await deletePlayer(deadUser.userId);
-                await savePlayer(p); players[id] = p;
+                
+                // 만약 죽은 사람이 본인이라면 즉시 종료
+                if (deadUser.userId === id) {
+                    const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
+                    return res.json(replyCard("마허라 강림", msgText, img));
+                } else {
+                    // 죽은 사람이 상대방이라면 상대방 데이터는 이미 삭제되었으므로 본인만 저장
+                    await savePlayer(p); players[id] = p;
+                }
             } else {
                 msgText += `✨ 마허라의 위압감이 전장을 짓누르지만, ${r.loser ? r.loser.nickname : (p.nickname === e.nickname ? e.nickname : p.nickname)}님은 버텨냈습니다!\n`;
                 await savePlayer(p); players[id] = p;
@@ -916,35 +927,52 @@ app.post("/chat", async (req, res) => {
             return res.json(replyCard("마허라 강림", msgText, img));
         }
 
+        // [수정] 일반 전투 승패 및 사망 처리 로직 개선
         if (r.winner) {
             const res = tryAddBattlePoints(r.winner, 5);
             if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
             else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
         }
 
-        let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
-        if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
-
-        if (r.loser.techniqueType !== "immortal") {
-            await deletePlayer(r.loser.userId);
-            if (r.loser.userId === id) {
-                resultText += `\n💀 ${p.nickname}님이 사망했습니다.`;
+        let deathMsg = "";
+        // 사망자 판정: r.loser가 존재하고 'immortal'이 아닐 때
+        if (r.loser && r.loser.techniqueType !== "immortal") {
+            const deadUser = r.loser;
+            await deletePlayer(deadUser.userId);
+            
+            if (deadUser.userId === id) {
+                deathMsg = `\n💀 ${p.nickname}님이 사망했습니다.`;
                 if (top3.includes(p.nickname)) deathTriggered = true;
             } else {
-                resultText += `\n💀 ${r.loser.nickname}님이 사망했습니다.`;
-                if (top3.includes(r.loser.nickname)) deathTriggered = true;
+                deathMsg = `\n💀 ${deadUser.nickname}님이 사망했습니다.`;
+                if (top3.includes(deadUser.nickname)) deathTriggered = true;
             }
-        } else {
+        } 
+        // 불사 술사 처리: 포인트만 0으로 만듦
+        else if (r.loser && r.loser.techniqueType === "immortal") {
             r.loser.point = 0;
             if (r.loser.userId === id) {
-                resultText += `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
+                deathMsg = `\n🛡️ [불사] 사망을 면했으나 모든 포인트를 상실했습니다!`;
             } else {
-                resultText += `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
+                deathMsg = `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
             }
+            // 불사는 삭제하지 않으므로 DB 업데이트
+            await savePlayer(r.loser);
         }
 
+        let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}${deathMsg}`;
+        
+        if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
+
+        // 생존자 DB 업데이트 (본인)
         await savePlayer(p); players[id] = p;
-        await savePlayer(e); players[e.userId] = e;
+        
+        // 상대방이 죽지 않았다면(불사 또는 승리자) DB 업데이트
+        if (r.loser && r.loser.techniqueType !== "immortal") {
+            // 이미 deletePlayer에서 처리됨
+        } else {
+            await savePlayer(e); players[e.userId] = e;
+        }
 
         const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + randomFightImage());
         return res.json(replyCard("전투 결과", resultText, img));
