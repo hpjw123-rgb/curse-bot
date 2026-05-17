@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.6 - STABLE)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.7 - STABLE FIX)
 // ==========================================================================
 
 const express = require("express");
@@ -784,7 +784,7 @@ app.post("/chat", async (req, res) => {
         return res.json(replyText(`✨ 장막을 거두었습니다. 이제 전투가 가능합니다.`));
     }
 
-    // 6. 주령전투
+    // 6. 주령전투 (FIXED)
     if (msg === "/주령전투") {
         const hour = kstHourString();
         if (p.lastCurseHour !== hour) { p.lastCurseHour = hour; p.curseBattles = 0; await savePlayer(p); players[id] = p; }
@@ -793,24 +793,26 @@ app.post("/chat", async (req, res) => {
         p.curseBattles += 1;
         const sp = statusPower(p);
         const cp = Math.floor(Math.random() * 90) + 10;
-        let resultMsg = "";
+        
+        let absorptionMsg = "";
+        let mainResult = "";
 
         if (sp >= cp) {
             addUnrestrictedPoints(p, 1);
             if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
                 const absorbAmount = Math.floor(cp / 5);
                 p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-                resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
+                absorptionMsg = `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
             }
             await savePlayer(p); players[id] = p;
-            resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
+            mainResult = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)`;
         } else {
-            resultMsg = `👹 주령전투 패배...\n${p.nickname} vs 주령\n${sp} vs ${cp}`;
+            mainResult = `👹 주령전투 패배...\n${p.nickname} vs 주령\n${sp} vs ${cp}`;
         }
-        return res.json(replyText(resultMsg));
+        return res.json(replyText(mainResult + absorptionMsg));
     }
 
-    // 7. 특급 주령 (Raid)
+    // 7. 특급 주령 (Raid) (FIXED)
     if (msg === "/특급주령") {
         resetRaidIfNeeded();
         const minute = kstMinute();
@@ -832,21 +834,26 @@ app.post("/chat", async (req, res) => {
         const win = totalParticipantPower >= bossPower;
         const participantList = Object.values(raid.participants).map(part => part.nickname).join(", ");
 
-        let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${participantList}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}`;
+        let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${participantList}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}\n`;
 
         if (win) {
             const reward = rewardByPower(bossPower);
             addUnrestrictedPoints(p, reward);
             raid.claimed[id] = true;
+
+            let absorptionMsg = "";
             if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
                 const absorbAmount = Math.floor(bossPower / 20);
                 p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-                msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
+                absorptionMsg = `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
             }
-            await savePlayer(p); players[id] = p;
-            msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
+
+            await savePlayer(p); 
+            players[id] = p;
+            msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)${absorptionMsg}`;
         } else {
-            await savePlayer(p); players[id] = p;
+            await savePlayer(p); 
+            players[id] = p;
         }
         return res.json(replyText(msgText));
     }
@@ -899,23 +906,17 @@ app.post("/chat", async (req, res) => {
             enemyDomainAlert = `\n⚠️ 상대 ${e.nickname}의 영역전개가 발동되었습니다!\n${e.domainName}\n`;
         }
 
-        // [수정] 마허라 이벤트 처리 로직 개선
         if (r.mahoragaEvent) {
             let msgText = `⚔ 전투\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n마허라 소환!\n`;
             if (r.targetDead) {
                 const deadUser = r.loser;
                 msgText += `💀 ${deadUser.nickname}님이 마허라에 의해 소멸되었습니다.\n`;
                 if (top3.includes(deadUser.nickname)) deathTriggered = true;
-                
-                // 사망자 즉시 삭제
                 await deletePlayer(deadUser.userId);
-                
-                // 만약 죽은 사람이 본인이라면 즉시 종료
                 if (deadUser.userId === id) {
                     const img = deathTriggered ? (BASE_URL + encodeURI(DEATH_IMAGE)) : (BASE_URL + encodeURI(MAH_IMAGE));
                     return res.json(replyCard("마허라 강림", msgText, img));
                 } else {
-                    // 죽은 사람이 상대방이라면 상대방 데이터는 이미 삭제되었으므로 본인만 저장
                     await savePlayer(p); players[id] = p;
                 }
             } else {
@@ -927,7 +928,6 @@ app.post("/chat", async (req, res) => {
             return res.json(replyCard("마허라 강림", msgText, img));
         }
 
-        // [수정] 일반 전투 승패 및 사망 처리 로직 개선
         if (r.winner) {
             const res = tryAddBattlePoints(r.winner, 5);
             if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
@@ -935,11 +935,9 @@ app.post("/chat", async (req, res) => {
         }
 
         let deathMsg = "";
-        // 사망자 판정: r.loser가 존재하고 'immortal'이 아닐 때
         if (r.loser && r.loser.techniqueType !== "immortal") {
             const deadUser = r.loser;
             await deletePlayer(deadUser.userId);
-            
             if (deadUser.userId === id) {
                 deathMsg = `\n💀 ${p.nickname}님이 사망했습니다.`;
                 if (top3.includes(p.nickname)) deathTriggered = true;
@@ -948,7 +946,6 @@ app.post("/chat", async (req, res) => {
                 if (top3.includes(deadUser.nickname)) deathTriggered = true;
             }
         } 
-        // 불사 술사 처리: 포인트만 0으로 만듦
         else if (r.loser && r.loser.techniqueType === "immortal") {
             r.loser.point = 0;
             if (r.loser.userId === id) {
@@ -956,21 +953,14 @@ app.post("/chat", async (req, res) => {
             } else {
                 deathMsg = `\n🛡️ [불사] ${r.loser.nickname}님은 포인트를 모두 잃고 살아남았습니다.`;
             }
-            // 불사는 삭제하지 않으므로 DB 업데이트
             await savePlayer(r.loser);
         }
 
         let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}${deathMsg}`;
-        
         if (enemyDomainAlert) resultText = enemyDomainAlert + "\n" + resultText;
 
-        // 생존자 DB 업데이트 (본인)
         await savePlayer(p); players[id] = p;
-        
-        // 상대방이 죽지 않았다면(불사 또는 승리자) DB 업데이트
-        if (r.loser && r.loser.techniqueType !== "immortal") {
-            // 이미 deletePlayer에서 처리됨
-        } else {
+        if (!(r.loser && r.loser.techniqueType !== "immortal")) {
             await savePlayer(e); players[e.userId] = e;
         }
 
@@ -990,33 +980,20 @@ app.post("/chat", async (req, res) => {
     }
 
     if (msg === "/콜라니 수령") {
-        // 1. 점령 여부 확인
         if (!p.occupiedColony) return res.json(replyText("현재 점령 중인 콜로니가 없습니다."));
-
         const nowMs = kstNow().getTime();
-        const currentHourStr = kstHourString(); // "YYYY-MM-DDTHH"
-
-        // 2. lastColonyClaimTime 에러 방지 로직
+        const currentHourStr = kstHourString();
         let lastClaimHourStr = "";
         if (p.lastColonyClaimTime && p.lastColonyClaimTime > 0) {
-            try {
-                lastClaimHourStr = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
-            } catch (e) {
-                lastClaimHourStr = "";
-            }
+            try { lastClaimHourStr = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13); } catch (e) { lastClaimHourStr = ""; }
         }
-
-        // 3. 시간 비교
         if (lastClaimHourStr === currentHourStr) {
             return res.json(replyText(`🚫 이미 이번 시간대(${currentHourStr.slice(11, 13)}시)에 포인트를 수령했습니다.`));
         }
-
-        // 4. 보상 지급 및 데이터 업데이트
         p.point += COLONY_REWARD;
         p.lastColonyClaimTime = nowMs;
         await savePlayer(p);
         players[id] = p;
-
         return res.json(replyText(`💰 [콜로니 보상 수령 완료]\n${p.occupiedColony}에서 ${COLONY_REWARD}P를 획득했습니다!\n다음 수령은 다음 정시부터 가능합니다.`));
     }
 
@@ -1024,64 +1001,34 @@ app.post("/chat", async (req, res) => {
         const idx = parseInt(msg.replace("/콜라니", "").trim()) - 1;
         const colonyName = COLONY_NAMES[idx];
         if (!colonyName) return res.json(replyText("잘못된 번호입니다."));
-
         const targetColony = colonies[colonyName] || { name: colonyName, ownerId: null, ownerNickname: null };
-
-        if (p.occupiedColony) {
-            return res.json(replyText(`🚫 이미 [${p.occupiedColony}]를(를) 점령 중입니다.\n한 명당 하나의 콜로니만 점령할 수 있습니다.`));
-        }
-
-        // 점령 시도 (비어있는 콜로니)
+        if (p.occupiedColony) return res.json(replyText(`🚫 이미 [${p.occupiedColony}]를(를) 점령 중입니다.\n한 명당 하나의 콜로니만 점령할 수 있습니다.`));
         if (!targetColony.ownerId) {
             p.occupiedColony = colonyName;
             targetColony.ownerId = id;
             targetColony.ownerNickname = p.nickname;
-            await savePlayer(p);
-            await saveColony(targetColony);
-            colonies[colonyName] = targetColony;
+            await savePlayer(p); await saveColony(targetColony); colonies[colonyName] = targetColony;
             return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 \`/콜라니 수령\`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
         } else {
-            // 기존 점령자가 있는 경우 (쟁탈전)
             if (targetColony.ownerId !== id) {
                 const owner = players[targetColony.ownerId];
                 if (!owner) return res.json(replyText("점령자가 이미 탈퇴했습니다. 콜로니를 재점령하세요."));
-
-                if (p.point < COLONY_BATTLE_COST) {
-                    return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
-                }
-
+                if (p.point < COLONY_BATTLE_COST) return res.json(replyText(`🚫 콜로니 쟁탈전에 참가하려면 ${COLONY_BATTLE_COST}P가 필요합니다.`));
                 p.point -= COLONY_BATTLE_COST;
                 await savePlayer(p); players[id] = p;
-
                 const r = battle(p, owner, true);
                 let msgText = `🚩 [콜로니 쟁탈전]\n${p.nickname} vs ${owner.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('colony_clash')}\n`;
-
                 if (r.winner) {
-                    const winner = r.winner;
-                    const loser = r.loser;
-
-                    if (owner.occupiedColony === colonyName) {
-                        owner.occupiedColony = null;
-                        await savePlayer(owner);
-                    }
-
-                    winner.occupiedColony = colonyName;
-                    targetColony.ownerId = winner.userId;
-                    targetColony.ownerNickname = winner.nickname;
-
-                    await savePlayer(winner);
-                    await saveColony(targetColony);
-                    colonies[colonyName] = targetColony;
-
-                    msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n`;
-                    msgText += `━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
+                    const winner = r.winner; const loser = r.loser;
+                    if (owner.occupiedColony === colonyName) { owner.occupiedColony = null; await savePlayer(owner); }
+                    winner.occupiedColony = colonyName; targetColony.ownerId = winner.userId; targetColony.ownerNickname = winner.nickname;
+                    await savePlayer(winner); await saveColony(targetColony); colonies[colonyName] = targetColony;
+                    msgText += `━━━━━━━━━━━━━━━━━━━━\n🏆 [점령 성공] ${winner.nickname}님이 ${colonyName}을(를) 탈환했습니다!\n━━━━━━━━━━━━━━━━━━━━\n${loser.nickname}님은 점령지에서 축출되었습니다.`;
                 } else {
                     msgText += `━━━━━━━━━━━━━━━━━━━━\n⚖️ 전투가 무승부로 끝났습니다. 점령자는 유지됩니다.`;
                 }
                 return res.json(replyText(msgText));
-            } else {
-                return res.json(replyText("이미 본인이 점령 중인 콜로니입니다."));
-            }
+            } else { return res.json(replyText("이미 본인이 점령 중인 콜로니입니다.")); }
         }
     }
 
