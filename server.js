@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.8 - RAID & ABSORPTION FIX)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.9 - TYPO FIX)
 // ==========================================================================
 
 const express = require("express");
@@ -800,9 +800,10 @@ app.post("/chat", async (req, res) => {
         if (sp >= cp) {
             addUnrestrictedPoints(p, 1);
             if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
+                // 오타 수정: absorbAmount로 변수명 통일
                 const absorbAmount = Math.floor(cp / 5);
                 p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-                absorptionMsg = `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
+                absorptionMsg = `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
             }
             await savePlayer(p); players[id] = p;
             mainResult = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)`;
@@ -855,7 +856,7 @@ app.post("/chat", async (req, res) => {
                 if (Math.random() < successChance) {
                     const absorbAmount = Math.floor(bossPower / 20);
                     p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-                    absorptionMsg = `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
+                    absorptionMsg = `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
                 }
             }
 
