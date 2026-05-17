@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.7 - STABLE FIX)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.8 - RAID & ABSORPTION FIX)
 // ==========================================================================
 
 const express = require("express");
@@ -812,7 +812,7 @@ app.post("/chat", async (req, res) => {
         return res.json(replyText(mainResult + absorptionMsg));
     }
 
-    // 7. 특급 주령 (Raid) (FIXED)
+    // 7. 특급 주령 (Raid) (FIXED & UPDATED)
     if (msg === "/특급주령") {
         resetRaidIfNeeded();
         const minute = kstMinute();
@@ -834,26 +834,38 @@ app.post("/chat", async (req, res) => {
         const win = totalParticipantPower >= bossPower;
         const participantList = Object.values(raid.participants).map(part => part.nickname).join(", ");
 
-        let msgText = `👹 특급 주령 전투 결과\n보스: ${raid.boss}\n보스 전투력: ${bossPower}\n참가자: ${participantList}\n최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n결과: ${win ? "승리" : "패배"}\n`;
+        // 기본 결과 메시지 (합산 전투력 포함)
+        let msgText = `👹 특급 주령 전투 결과\n` +
+                      `━━━━━━━━━━━━━━━━━━━━\n` +
+                      `보스: ${raid.boss} (전투력: ${bossPower})\n` +
+                      `참가자 합산 전투력: ${totalParticipantPower}\n` +
+                      `참가자: ${participantList}\n` +
+                      `최강 술사: ${maxP ? maxP.nickname : "없음"} (${maxV})\n` +
+                      `결과: ${win ? "✅ 승리" : "❌ 패배"}\n`;
 
         if (win) {
             const reward = rewardByPower(bossPower);
             addUnrestrictedPoints(p, reward);
             raid.claimed[id] = true;
 
+            // 주령조술사 확률적 흡수 (최강 술사 여부 상관없음)
             let absorptionMsg = "";
-            if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
-                const absorbAmount = Math.floor(bossPower / 20);
-                p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-                absorptionMsg = `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
+            if (p.techniqueType === "curse_absorb") {
+                const successChance = 0.5; // 50% 확률
+                if (Math.random() < successChance) {
+                    const absorbAmount = Math.floor(bossPower / 20);
+                    p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
+                    absorptionMsg = `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
+                }
             }
 
             await savePlayer(p); 
             players[id] = p;
-            msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)${absorptionMsg}`;
+            msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n보상: +${reward} 포인트 (제한 없음)${absorptionMsg}`;
         } else {
             await savePlayer(p); 
             players[id] = p;
+            msgText += `\n━━━━━━━━━━━━━━━━━━━━\n패배하였습니다. 다음 기회를 노려보세요.`;
         }
         return res.json(replyText(msgText));
     }
