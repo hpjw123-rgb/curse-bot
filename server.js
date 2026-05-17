@@ -1,5 +1,5 @@
 // ==========================================================================
-// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.2 - Curse Absorb Fix & Raid Patch)
+// 주술 배틀 RPG ULTIMATE FINAL INTEGRATED (v8.9.3 - Curse Absorb & Colony Patch)
 // ==========================================================================
 
 const express = require("express");
@@ -72,7 +72,8 @@ const playerSchema = new mongoose.Schema({
   earnedPointsHistory: { type: Array, default: [] },
   curtainBypassCount: { type: Number, default: 0 },
   lastBypassTime: { type: Number, default: 0 },
-  occupiedColony: { type: String, default: null }
+  occupiedColony: { type: String, default: null },
+  lastColonyClaimTime: { type: Number, default: 0 } // 콜로니 포인트 수령 시간 기록용 추가
 }, { collection: "players" });
 
 const Player = mongoose.model("Player", playerSchema);
@@ -521,15 +522,6 @@ function battle(a, b, isColonyBattle = false) {
   let winner = Af.power >= Bf.power ? a : b;
   let loser = winner === a ? b : a;
 
-  // [FIX] 주령조술 에너지 흡수 로직 (플레이어 간 전투에서는 제거됨)
-  // 이 함수는 오직 주령전투 등에서 활용하기 위해 유지하며, 플레이어간 전투(/전투) 호출 시에는 사용되지 않음.
-  // (참고: battle 함수 내부에서 isColonyBattle 여부와 상관없이 계산되나, /전투 로직에서 win.isAbsorbing 플래그 처리를 하지 않음)
-  if (winner.techniqueType === "curse_absorb") {
-    const absorbAmount = Math.floor((loser.basePower + loser.energyBonus) / 5);
-    winner.absorbedPower = (winner.absorbedPower || 0) + absorbAmount;
-    winner.isAbsorbing = true; 
-  }
-  
   if (winner.technique === "적혈조술") {
     winner.bloodStack += 1;
   }
@@ -676,7 +668,8 @@ app.post("/chat", async (req, res) => {
       domainName: generateDomainName({ enhance: 0 }), battleCount: 0, battleWindow: kst6hWindow(),
       curseBattles: 0, lastCurseHour: kstHourString(), curtainActiveUntil: kstNow().getTime() + (12 * 60 * 60 * 1000),
       inventory: [], equippedTool: null, earnedPointsHistory: [],
-      curtainBypassCount: 0, lastBypassTime: 0, occupiedColony: null
+      curtainBypassCount: 0, lastBypassTime: 0, occupiedColony: null,
+      lastColonyClaimTime: 0
     };
     players[id] = newPlayer;
     await savePlayer(newPlayer);
@@ -807,11 +800,11 @@ app.post("/chat", async (req, res) => {
 
     if (sp >= cp) {
       addUnrestrictedPoints(p, 1);
-      // [FIX] 주령조술 에너지를 흡수하는 로직 보강 및 안정화
+      // [FIX] 주령조술 에너지 흡수 로직 보강
       if (p.techniqueType === "curse_absorb" && Math.random() < 0.5) {
         const absorbAmount = Math.floor(cp / 5);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorAmount})`;
+        resultMsg += `\n🌀 [주령조술] 주령의 정수를 흡수했습니다! (+${absorbAmount})`;
       }
       await savePlayer(p); players[id] = p;
       resultMsg = `👹 주령전투 승리!\n${p.nickname} vs 주령\n${sp} vs ${cp}\n주령 처치! 포인트 +1 획득! (제한 없음)${resultMsg}`;
@@ -836,7 +829,6 @@ app.post("/chat", async (req, res) => {
     if (!raid.participants[id]) return res.json(replyText("현재 회차에 참가하지 않았습니다. (0~29분 사이에 참가해야 합니다.)"));
     if (raid.claimed[id]) return res.json(replyText("이미 보상을 수령했습니다."));
     
-    // [FIX] raidHour() 함수 호출 오류 수정
     if (raid.hour !== kstHourString().slice(0, 13)) return res.json(replyText("보상 기간이 종료되었습니다."));
 
     const bossPower = raidPower();
@@ -854,7 +846,7 @@ app.post("/chat", async (req, res) => {
       if (maxP && maxP.userId === id && p.techniqueType === "curse_absorb") {
         const absorbAmount = Math.floor(bossPower / 20);
         p.absorbedPower = (p.absorbedPower || 0) + absorbAmount;
-        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorAmount})`;
+        msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🌀 [주령조술] 보스의 정수를 흡수했습니다! (+${absorbAmount})`;
       }
       await savePlayer(p); players[id] = p; 
       msgText += `\n━━━━━━━━━━━━━━━━━━━━\n🎊 승리 축하합니다!\n참가자: ${participantList}\n보상: +${reward} 포인트 (제한 없음)`;
@@ -933,8 +925,6 @@ app.post("/chat", async (req, res) => {
       const res = tryAddBattlePoints(r.winner, 5);
       if (res.success) pointGainMsg = `\n💰 승리 보상: +5 포인트 획득!`;
       else pointGainMsg = `\n⚠️ 포인트 획득 실패: 6시간 내 한도 도달.`;
-      
-      // [REMOVED] 플레이어 간 전투 시 주령조술 흡수(전투력 상승) 로직이 여기에는 존재하지 않습니다.
     }
 
     let resultText = `⚔ 전투 개시\n${p.nickname} vs ${e.nickname}\n━━━━━━━━━━━━━━━━━━━━\n${r.A.log}\n${r.A.domainText || ""}\n${r.A.blackText || ""}\n━━━━━━━━━━━━━━━━━━━━\n📊 [최종 전투력]\n🔹 ${p.nickname}: ${r.A.power}\n🔹 ${e.nickname}: ${r.B.power}\n━━━━━━━━━━━━━━━━━━━━\n${getNarration('victory')}\n🏆 [최종 승자]: ${r.winner.nickname}\n━━━━━━━━━━━━━━━━━━━━${pointGainMsg}${bypassMsg}`;
@@ -972,8 +962,30 @@ app.post("/chat", async (req, res) => {
       const owner = colonies[name]?.ownerNickname ? `[점령: ${colonies[name].ownerNickname}]` : "[미점령]";
       msgText += `${idx + 1}. ${name} ${owner}\n`;
     });
-    msgText += "━━━━━━━━━━━━\n점령: /콜라니 [번호]";
+    msgText += "━━━━━━━━━━━━\n점령: /콜라니 [번호]\n━━━━━━━━━━━━\n💰 [포인트 수령]\n내가 점령한 콜로니가 있다면 `/콜라니 수령`으로 매 정시마다 5P를 받을 수 있습니다.";
     return res.json(replyText(msgText));
+  }
+
+  // [NEW] 콜로니 포인트 수령 로직
+  if (msg === "/콜라니 수령") {
+    if (!p.occupiedColony) return res.json(replyText("현재 점령 중인 콜로니가 없습니다."));
+    
+    const nowMs = kstNow().getTime();
+    const currentHour = kstHourString(); // "YYYY-MM-DDTHH" 형태
+    
+    // 마지막 수령 시간이 현재 시간의 '시' 단위와 다르면 수령 가능
+    // 예: lastColonyClaimTime이 1시인데 현재가 2시라면 수령 가능
+    const lastClaimHour = new Date(p.lastColonyClaimTime).toISOString().slice(0, 13);
+    
+    if (lastClaimHour === currentHour) {
+      return res.json(replyText(`🚫 이미 이번 시간대에 포인트를 수령했습니다.`));
+    }
+
+    p.point += COLONY_REWARD;
+    p.lastColonyClaimTime = nowMs;
+    await savePlayer(p); players[id] = p;
+
+    return res.json(replyText(`💰 [콜로니 보상 수령 완료]\n${p.occupiedColony}에서 ${COLONY_REWARD}P를 획득했습니다!\n다음 수령은 다음 정시부터 가능합니다.`));
   }
 
   if (msg.startsWith("/콜라니")) {
@@ -994,7 +1006,7 @@ app.post("/chat", async (req, res) => {
       await savePlayer(p);
       await saveColony(targetColony);
       colonies[colonyName] = targetColony;
-      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 ${COLONY_REWARD}P를 획득합니다.`));
+      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 `/콜라니 수령`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
     }
 
     if (targetColony.ownerId !== id) {
