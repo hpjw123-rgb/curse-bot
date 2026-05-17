@@ -998,8 +998,7 @@ app.post("/chat", async (req, res) => {
       await savePlayer(p);
       await saveColony(targetColony);
       colonies[colonyName] = targetColony;
-      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 `/콜라니 수령`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
-    }
+      return res.json(replyText(`🚩 [점령 성공] ${colonyName}을(를) 점령했습니다!\n매 정시마다 \`/콜라니 수령\`을 통해 ${COLONY_REWARD}P를 획득할 수 있습니다.`));
 
     if (targetColony.ownerId !== id) {
       const owner = players[targetColony.ownerId];
